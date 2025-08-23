@@ -1,3 +1,37 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# -----------------------------------------------------------------------------
+# BB UVs (Minimal + Move UVs — Selected/Highlighted Defaults)
+# Derived work based on: Texel Density Checker — https://github.com/mrven/Blender-Texel-Density-Checker
+# Original author: Ivan Vostrikov (mrven)
+# 
+# This file is part of a Blender add-on that includes code and ideas derived
+# from the project “Texel Density Checker” by Ivan Vostrikov (mrven), which is
+# licensed under the GNU General Public License version 3.0 or (at your option)
+# any later version.
+#
+# Copyright (C) 2025 BB (modifications and adaptations)
+# Copyright (C) Ivan Vostrikov (mrven) and contributors (original project)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+#
+# Summary of modifications from the upstream project:
+# - Minimal “Get/Set Texel Density” implementation tailored for fast workflows.
+# - Independent per-object TD calculation without changing selections.
+# - Added Move UVs operator with contextual “Selected Only / Highlighted Only” toggle.
+# - Compact UI panels for UV Editor and 3D View.
+# -----------------------------------------------------------------------------
+
 bl_info = {
     "name": "BB UVs (Minimal + Move UVs — Selected/Highlighted Defaults)",
     "author": "BB",
