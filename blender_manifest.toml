@@ -1,0 +1,12 @@
+schema_version = "1.0.0"
+id = "objectdisplay"
+version = "1.0.0"
+name = "BB UVs"
+tagline = "Manages UVs in object mode"
+maintainer = "Blender Bob"
+type = "add-on"
+website = "https://github.com/riouxr/BB-UVs"
+tags = ["Mesh"]
+blender_version_min = "4.2.0"
+license = ["SPDX:GPL-3.0-or-later"]
+copyright = ["2025 Robert Rioux"]
