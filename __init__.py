@@ -185,7 +185,7 @@ class BB_Texel_Density_Check(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        td = context.scene.td
+        td = context.scene.bb_td
         active_obj = context.active_object
         if not _object_is_uv_mesh(active_obj):
             self.report({'WARNING'}, "No active mesh with UVs")
@@ -211,7 +211,7 @@ class BB_Texel_Density_Set(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        td = context.scene.td
+        td = context.scene.bb_td
         try:
             target_td = float(td.density)
         except:
@@ -309,7 +309,7 @@ class BB_UVs_MoveUVs(Operator):
     )
 
     def execute(self, context):
-        td = context.scene.td
+        td = context.scene.bb_td
         amt = float(td.move_amount)
         if amt == 0.0:
             return {'CANCELLED'}
@@ -390,7 +390,7 @@ class BB_UVs_SetUI(Operator):
 # ---------------------------------------------------------------------------
 
 def draw_bb_uvs_panel(self, context):
-    td = context.scene.td
+    td = context.scene.bb_td
     layout = self.layout
 
     layout.operator("bb_uvs.set_ui", text="Set UI")
@@ -482,10 +482,10 @@ classes = (
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
-    bpy.types.Scene.td = PointerProperty(type=TDSettings)
+    bpy.types.Scene.bb_td = PointerProperty(type=TDSettings)
 
 def unregister():
-    del bpy.types.Scene.td
+    del bpy.types.Scene.bb_td
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
 
