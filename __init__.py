@@ -436,7 +436,7 @@ def draw_bb_uvs_panel(self, context):
     op.direction = 'RIGHT'
     op = col.operator("bb_uvs.move_uvs", text="↘")
     op.direction = 'DOWN_RIGHT'
-
+    
 class UV_PT_BB_UVs(Panel):
     bl_label = "BB UVs"
     bl_space_type = 'IMAGE_EDITOR'
