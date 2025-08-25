@@ -743,11 +743,12 @@ class BB_UVs_FlipUVs(Operator):
 # ---------------------------------------------------------------------------
 
 class BB_UVs_NormalizePack(Operator):
-    """Normalize islands across *all* edit-mode objects, then pack once (snap to first UDIM)."""
+    """Normalize islands across *all* relevant objects to a single shared scale, then pack once (snap to first UDIM)."""
     bl_idname = "bb_uvs.normalize_pack"
-    bl_label = "Pack"
+    bl_label = "Pack Together"
     bl_options = {'REGISTER', 'UNDO'}
 
+    # --- packing helpers (unchanged) ---
     @staticmethod
     def _call_pack(args):
         try:
@@ -772,24 +773,13 @@ class BB_UVs_NormalizePack(Operator):
         return bpy.ops.uv.pack_islands('EXEC_DEFAULT', **args4)
 
     @staticmethod
-    def _normalize_all_edit_meshes(only_selected=True):
-        for obj in bpy.context.objects_in_mode:
-            if obj.type != 'MESH':
-                continue
-            bm = bmesh.from_edit_mesh(obj.data)
-            _normalize_islands_in_bmesh(bm, xy_independent=True, only_selected=only_selected, respect_aspect=True)
-            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
-
-    @staticmethod
     def _snap_uvs_to_first_udim_all():
         """Translate selected UVs so their minimum UDIM lands at (0,0) across *all* edit-mode meshes."""
         objs = [o for o in bpy.context.objects_in_mode if o.type == 'MESH']
         if not objs:
             return
 
-        # Compute global min tile across selection
-        min_u = float('inf')
-        min_v = float('inf')
+        min_u = float('inf'); min_v = float('inf')
         for obj in objs:
             bm = bmesh.from_edit_mesh(obj.data)
             uv_layer = bm.loops.layers.uv.active
@@ -805,8 +795,7 @@ class BB_UVs_NormalizePack(Operator):
         if min_u == float('inf'):
             return
 
-        du = -math.floor(min_u)
-        dv = -math.floor(min_v)
+        du = -math.floor(min_u); dv = -math.floor(min_v)
         if du == 0 and dv == 0:
             return
 
@@ -820,8 +809,73 @@ class BB_UVs_NormalizePack(Operator):
                     continue
                 for l in f.loops:
                     uv = l[uv_layer].uv
-                    uv.x += du
-                    uv.y += dv
+                    uv.x += du; uv.y += dv
+            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+
+    # --- NEW: compute ONE global target factor across all edit-mode meshes ---
+    @staticmethod
+    def _compute_global_tot_fac(only_selected=True):
+        """
+        Returns tot_fac = (sum area_3d across all considered faces) / (sum area_uv across all considered faces)
+        over *all* meshes currently in edit mode (multi-edit).
+        """
+        total_area_3d = 0.0
+        total_area_uv = 0.0
+        objs = [o for o in bpy.context.objects_in_mode if o.type == 'MESH']
+        for obj in objs:
+            bm = bmesh.from_edit_mesh(obj.data)
+            uv_layer = bm.loops.layers.uv.active
+            if not uv_layer:
+                continue
+            for f in bm.faces:
+                if only_selected and not f.select:
+                    continue
+                a3 = f.calc_area()
+                au = _poly_uv_area(f, uv_layer)
+                total_area_3d += a3
+                total_area_uv += au
+        if total_area_uv <= 1e-12 or total_area_3d <= 1e-12:
+            return None
+        return total_area_3d / total_area_uv  # global target ratio
+
+    # --- NEW: normalize every mesh's islands to the SAME global tot_fac ---
+    @staticmethod
+    def _normalize_all_edit_meshes_to_fac(tot_fac, only_selected=True):
+        """
+        For each mesh in multi-edit, compute per-island scale so that area3/areaUV' == tot_fac.
+        scale = sqrt( (area3/areaUV) / tot_fac )
+        """
+        objs = [o for o in bpy.context.objects_in_mode if o.type == 'MESH']
+        for obj in objs:
+            bm = bmesh.from_edit_mesh(obj.data)
+            uv_layer = bm.loops.layers.uv.active
+            if not uv_layer:
+                continue
+
+            islands = _collect_uv_islands(bm, uv_layer, only_selected=only_selected)
+            if not islands:
+                continue
+
+            for faces in islands:
+                area3 = 0.0; areauv = 0.0
+                for f in faces:
+                    area3 += f.calc_area()
+                    areauv += _poly_uv_area(f, uv_layer)
+                if areauv <= 1e-12 or area3 <= 1e-12:
+                    continue
+
+                fac = area3 / areauv
+                scale = math.sqrt(fac / tot_fac)
+                if isclose(scale, 1.0, abs_tol=1e-6):
+                    continue
+
+                cx, cy = _center_of_island_uv(faces, uv_layer)
+                for f in faces:
+                    for l in f.loops:
+                        uv = l[uv_layer].uv
+                        uv.x = (uv.x - cx) * scale + cx
+                        uv.y = (uv.y - cy) * scale + cy
+
             bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
 
     def execute(self, context):
@@ -845,6 +899,7 @@ class BB_UVs_NormalizePack(Operator):
         start_mode = getattr(active, "mode", "OBJECT")
 
         if start_mode == 'EDIT':
+            # Ensure all faces are selected for a consistent global calc
             ts = context.tool_settings
             ts.mesh_select_mode = (False, False, True)
             bpy.ops.mesh.select_all(action='SELECT')
@@ -853,22 +908,26 @@ class BB_UVs_NormalizePack(Operator):
             except Exception:
                 pass
 
-            self._normalize_all_edit_meshes(only_selected=True)
+            # Compute ONE global target ratio and normalize all to it, then pack once
+            tot_fac = self._compute_global_tot_fac(only_selected=True)
+            if tot_fac is None:
+                self.report({'WARNING'}, "Not enough UV/mesh data to normalize")
+                return {'CANCELLED'}
+
+            self._normalize_all_edit_meshes_to_fac(tot_fac, only_selected=True)
             self._call_pack(args)
             self._snap_uvs_to_first_udim_all()
             return {'FINISHED'}
 
-        # OBJECT mode: normalize ALL selected meshes with UVs, then one pack using multi-edit
+        # OBJECT mode: enter multi-edit on all selected UV meshes, normalize to ONE global factor, then pack once
         prev_active = active
         prev_selection = context.selected_objects[:]
-
         targets = [o for o in prev_selection if _object_is_uv_mesh(o)]
         if not targets:
             self.report({'WARNING'}, "No selected meshes with UVs to pack")
             return {'CANCELLED'}
 
-        # Enter multi-object edit on targets
-        for o in bpy.data.objects:
+        for o in bpy.data.objects:  # isolate targets for multi-edit
             o.select_set(False)
         for o in targets:
             o.select_set(True)
@@ -884,7 +943,20 @@ class BB_UVs_NormalizePack(Operator):
         except Exception:
             pass
 
-        self._normalize_all_edit_meshes(only_selected=False)
+        tot_fac = self._compute_global_tot_fac(only_selected=False)
+        if tot_fac is None:
+            bpy.ops.object.mode_set(mode='OBJECT')
+            # restore selection/active
+            for o in bpy.data.objects:
+                o.select_set(False)
+            for o in prev_selection:
+                if o and o.name in bpy.data.objects:
+                    o.select_set(True)
+            context.view_layer.objects.active = prev_active
+            self.report({'WARNING'}, "Not enough UV/mesh data to normalize")
+            return {'CANCELLED'}
+
+        self._normalize_all_edit_meshes_to_fac(tot_fac, only_selected=False)
         self._call_pack(args)
         self._snap_uvs_to_first_udim_all()
 
@@ -897,6 +969,100 @@ class BB_UVs_NormalizePack(Operator):
             if o and o.name in bpy.data.objects:
                 o.select_set(True)
         context.view_layer.objects.active = prev_active
+
+        return {'FINISHED'}
+
+class BB_UVs_PackIndividually(Operator):
+    """Normalize & pack each selected object independently (snap each to first UDIM)."""
+    bl_idname = "bb_uvs.normalize_pack_individually"
+    bl_label = "Pack Individually"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        args = {
+            "udim_source": "ACTIVE_UDIM",
+            "rotate": False,
+            "scale": True,
+            "margin_method": "FRACTION",
+            "margin": 0.00390625,
+            "pin": False,
+            "merge_overlap": False,
+            "pin_method": "LOCKED",
+            "shape_method": "CONCAVE",
+        }
+
+        active = context.view_layer.objects.active
+        if not _object_is_uv_mesh(active):
+            self.report({'WARNING'}, "No active mesh with UVs")
+            return {'CANCELLED'}
+
+        start_mode = getattr(active, "mode", "OBJECT")
+        original_selection = context.selected_objects[:]
+        original_active = active
+        original_edit_objs = list(context.objects_in_mode) if start_mode == 'EDIT' else []
+
+        # Targets: in Edit Mode use the objects currently in multi-edit; in Object Mode use selected.
+        if start_mode == 'EDIT':
+            targets = [o for o in original_edit_objs if _object_is_uv_mesh(o)]
+        else:
+            targets = [o for o in original_selection if _object_is_uv_mesh(o)]
+
+
+        if not targets:
+            self.report({'WARNING'}, "No selected meshes with UVs to pack")
+            return {'CANCELLED'}
+
+        def _normalize_single(obj):
+            bm = bmesh.from_edit_mesh(obj.data)
+            _normalize_islands_in_bmesh(bm, xy_independent=True, only_selected=False, respect_aspect=True)
+            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+
+        for obj in targets:
+            # Ensure we leave any edit mode before switching objects
+            if getattr(context.view_layer.objects.active, "mode", "OBJECT") == 'EDIT':
+                bpy.ops.object.mode_set(mode='OBJECT')
+
+            # Isolate this object
+            for o in bpy.data.objects:
+                o.select_set(False)
+            obj.select_set(True)
+            context.view_layer.objects.active = obj
+
+            bpy.ops.object.mode_set(mode='EDIT')
+
+            ts = context.tool_settings
+            ts.mesh_select_mode = (False, False, True)
+            bpy.ops.mesh.select_all(action='SELECT')
+            try:
+                bpy.ops.uv.select_all(action='SELECT')
+            except Exception:
+                pass
+
+            # Normalize this object, pack, and snap to first UDIM (for the single object in edit)
+            _normalize_single(obj)
+            BB_UVs_NormalizePack._call_pack(args)
+            BB_UVs_NormalizePack._snap_uvs_to_first_udim_all()
+
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+        # Restore selection and active
+        for o in bpy.data.objects:
+            o.select_set(False)
+        for o in original_selection:
+            if o and o.name in bpy.data.objects:
+                o.select_set(True)
+        context.view_layer.objects.active = original_active
+
+        # If we started in multi-object edit, restore it
+        if start_mode == 'EDIT':
+            for o in bpy.data.objects:
+                o.select_set(False)
+            for o in original_edit_objs:
+                if o and o.name in bpy.data.objects:
+                    o.select_set(True)
+            if original_edit_objs:
+                context.view_layer.objects.active = original_edit_objs[0]
+                bpy.ops.object.mode_set(mode='EDIT')
 
         return {'FINISHED'}
 
@@ -949,7 +1115,10 @@ def draw_bb_uvs_panel(self, context):
 
     layout.separator()
     layout.label(text="Pack")
-    layout.operator("bb_uvs.normalize_pack", text="Pack", icon='UV')
+    row = layout.row(align=True)
+    row.operator("bb_uvs.normalize_pack_individually", text="Pack Individually")
+    row.operator("bb_uvs.normalize_pack", text="Pack Together")
+
 
     layout.separator()
     row = layout.row(align=True)
@@ -1061,6 +1230,7 @@ classes = (
     BB_UVs_SetMoveContext,
     BB_UVs_ToggleMoveHighlight,
     UV_PT_BB_UVs,
+    BB_UVs_PackIndividually,
     VIEW3D_PT_BB_UVs,
 )
 
