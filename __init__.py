@@ -503,10 +503,8 @@ class BB_Texel_Density_Set(Operator):
         if start_mode == 'EDIT':
             targets = [o for o in context.objects_in_mode if _object_is_uv_mesh(o)]
         else:
-            if td.move_selected_only:
-                targets = [start_active] if _object_is_uv_mesh(start_active) else []
-            else:
-                targets = [o for o in start_selected if _object_is_uv_mesh(o)]
+            # Object Mode: always apply to all selected meshes with UVs
+            targets = [o for o in start_selected if _object_is_uv_mesh(o)]
 
         if not targets:
             self.report({'WARNING'}, "No mesh with UVs selected")
