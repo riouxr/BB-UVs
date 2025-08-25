@@ -1,6 +1,6 @@
 schema_version = "1.0.0"
 id = "objectdisplay"
-version = "1.0.0"
+version = "1.4.1"
 name = "BB UVs"
 tagline = "Manages UVs in object mode"
 maintainer = "Blender Bob"
