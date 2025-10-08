@@ -909,7 +909,8 @@ class BB_UVs_SetUI(Operator):
 # ------------------------------ UI Panels ------------------------------
 
 def draw_bb_uvs_panel(self, context):
-    S = _S(context); layout = self.layout
+    S = context.scene
+    layout = self.layout
 
     # Grid helper (BEFORE Set UI)
     layout.label(text="Grid Helper")
@@ -952,7 +953,14 @@ def draw_bb_uvs_panel(self, context):
         op = right.operator("bb_uvs.set_move_context", text="Highlighted", icon='RADIOBUT_ON', depress=not S.bb_move_selected_only)
         op.set_selected = False
     else:
-        row.operator("bb_uvs.toggle_move_highlight", text="Highlighted Only", icon='RESTRICT_SELECT_OFF', depress=S.bb_move_selected_only)
+        # Object Mode: "Selected" = all selected objects; "Highlighted" = active only
+        left = row.row(align=True)
+        op = left.operator("bb_uvs.set_move_context", text="Selected", icon='RESTRICT_SELECT_OFF', depress=not S.bb_move_selected_only)
+        op.set_selected = False  # move all selected objects
+
+        right = row.row(align=True)
+        op = right.operator("bb_uvs.set_move_context", text="Highlighted", icon='RADIOBUT_ON', depress=S.bb_move_selected_only)
+        op.set_selected = True   # move only the active (highlighted) object
 
     row = layout.row(align=True)
     col = row.column(align=True); col.operator_context = 'EXEC_DEFAULT'
