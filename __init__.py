@@ -95,15 +95,42 @@ def _ensure_grid_material(img, mat_name="BB_UVs_GridMat"):
     mat.use_nodes = True
     nt = mat.node_tree
     nt.nodes.clear()
-    n_out = nt.nodes.new("ShaderNodeOutputMaterial"); n_out.location = (400, 0)
-    n_diff = nt.nodes.new("ShaderNodeBsdfDiffuse");   n_diff.location = (150, 0)
-    n_tex = nt.nodes.new("ShaderNodeTexImage");       n_tex.location = (-150, 0)
+    n_out = nt.nodes.new("ShaderNodeOutputMaterial"); n_out.location = (500, 0)
+    n_diff = nt.nodes.new("ShaderNodeBsdfDiffuse");   n_diff.location = (250, 0)
+    n_tex = nt.nodes.new("ShaderNodeTexImage");       n_tex.location = (0, 0)
+    n_map = nt.nodes.new("ShaderNodeMapping");        n_map.location = (-200, 0)
+    n_coord = nt.nodes.new("ShaderNodeTexCoord");     n_coord.location = (-400, 0)
     n_tex.interpolation = 'Linear'
     n_tex.extension = 'REPEAT'
     n_tex.image = img
+    nt.links.new(n_coord.outputs["UV"], n_map.inputs["Vector"])
+    nt.links.new(n_map.outputs["Vector"], n_tex.inputs["Vector"])
     nt.links.new(n_tex.outputs["Color"], n_diff.inputs["Color"])
     nt.links.new(n_diff.outputs["BSDF"], n_out.inputs["Surface"])
     return mat
+
+# New operator for setting grid scale
+class BB_UVs_SetGridScale(Operator):
+    bl_idname = "bb_uvs.set_grid_scale"
+    bl_label = "Set Grid Scale"
+    bl_options = {'REGISTER', 'UNDO'}
+    scale: EnumProperty(
+        items=[('1', "1x", ""), ('2', "2x", ""), ('4', "4x", ""), ('6', "6x", "")],
+        name="Scale", default='1'
+    )
+    def execute(self, context):
+        mat = bpy.data.materials.get("BB_UVs_GridMat")
+        if not mat or not mat.node_tree:
+            self.report({'WARNING'}, "Grid material not found")
+            return {'CANCELLED'}
+        fac = float(self.scale)
+        nt = mat.node_tree
+        for n in nt.nodes:
+            if n.type == 'MAPPING':
+                n.inputs['Scale'].default_value = (fac, fac, 1.0)
+                break
+        context.view_layer.update()
+        return {'FINISHED'}
 
 def _set_all_faces_to_mat(obj, mat_index):
     if obj.data.is_editmode:
@@ -922,6 +949,11 @@ def draw_bb_uvs_panel(self, context):
     row = layout.row(align=True)
     row.operator("bb_uvs.apply_grid", text="Apply Grid", icon='IMAGE_DATA')
     row.operator("bb_uvs.revert_materials", text="Revert", icon='LOOP_BACK')
+    row = layout.row(align=True)
+    op = row.operator("bb_uvs.set_grid_scale", text="1x"); op.scale = '1'
+    op = row.operator("bb_uvs.set_grid_scale", text="2x"); op.scale = '2'
+    op = row.operator("bb_uvs.set_grid_scale", text="4x"); op.scale = '4'
+    op = row.operator("bb_uvs.set_grid_scale", text="6x"); op.scale = '6'
 
     layout.separator()
     layout.label(text="Set UI")
@@ -1040,6 +1072,7 @@ def register():
         BB_UVs_MoveUVs, BB_UVs_RotateUVs, BB_UVs_NormalizePack,
         BB_UVs_SetUI, BB_UVs_FlipUVs, BB_UVs_SetMoveContext, BB_UVs_ToggleMoveHighlight,
         BB_UVs_ChooseGridImage, BB_UVs_ApplyGrid, BB_UVs_RevertMaterials,
+        BB_UVs_SetGridScale,
         UV_PT_BB_UVs, BB_UVs_PackIndividually, VIEW3D_PT_BB_UVs,
     ):
         try:
@@ -1066,6 +1099,7 @@ def unregister():
         BB_UVs_MoveUVs, BB_UVs_RotateUVs, BB_UVs_NormalizePack,
         BB_UVs_SetUI, BB_UVs_FlipUVs, BB_UVs_SetMoveContext, BB_UVs_ToggleMoveHighlight,
         BB_UVs_ChooseGridImage, BB_UVs_ApplyGrid, BB_UVs_RevertMaterials,
+        BB_UVs_SetGridScale,
         UV_PT_BB_UVs, BB_UVs_PackIndividually, VIEW3D_PT_BB_UVs,
     )):
         try:
