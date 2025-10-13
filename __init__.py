@@ -1628,18 +1628,19 @@ def draw_bb_uvs_panel(self, context):
     # Only show "Check and fix" in the UV Editor (IMAGE_EDITOR)
     if context.space_data.type == 'IMAGE_EDITOR':
         layout.separator()
-        layout.label(text="Check and fix")
+        
         if context.mode == 'EDIT_MESH':
+            layout.label(text="Check and fix")
             f = layout.row(); f.scale_y = 1.1
             f = layout.row(); f.scale_y = 1.1
             f.operator("bb_uvs.select_cross_udims", text="", icon='SNAP_GRID')
             f.operator("bb_uvs.select_boundaries", text="", icon='EDGESEL')
             f.operator("uv.select_overlap", text="", icon='SELECT_INTERSECT')
             f.operator("bb_uvs.select_zero_area", text="", icon='CANCEL')
-            f = layout.row(); f.scale_y = 1.1
-            f.operator("bb_uvs.select_flipped", text="Select Flipped", icon='UV_SYNC_SELECT')
-            op = f.operator("bb_uvs.flip_uvs", text="Flip Horizontal", icon='ARROW_LEFTRIGHT')
-            op.axis = 'H'
+    f = layout.row(); f.scale_y = 1.1
+    f.operator("bb_uvs.select_flipped", text="Select Flipped", icon='UV_SYNC_SELECT')
+    op = f.operator("bb_uvs.flip_uvs", text="Flip Horizontal", icon='ARROW_LEFTRIGHT')
+    op.axis = 'H'
 
 class UV_PT_BB_UVs(Panel):
     bl_label = "BB UVs"
