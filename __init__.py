@@ -1175,9 +1175,6 @@ class BB_UVs_SelectFlipped(Operator):
 
 # ------------------------------ Select Boundaries (Fixed) ------------------------------
 
-# ------------------------------ Select Boundaries (Fixed) ------------------------------
-# ------------------------------ Select Boundaries (Fixed) ------------------------------
-
 class BB_UVs_SelectBoundaries(bpy.types.Operator):
     bl_idname = "bb_uvs.select_boundaries"
     bl_label = "Select Boundaries"
@@ -1194,10 +1191,13 @@ class BB_UVs_SelectBoundaries(bpy.types.Operator):
 
         total_selected = 0
         sync = context.tool_settings.use_uv_select_sync
-        if sync:
-            # Auto-disable UV sync and continue instead of showing error
-            context.tool_settings.use_uv_select_sync = False
 
+        if sync:
+            bpy.ops.mesh.select_all(action='SELECT')
+            context.tool_settings.use_uv_select_sync = False
+            # Ensure UVs are fully selected after disabling sync
+            bpy.ops.uv.select_all(action='SELECT')
+            
         bpy.ops.uv.select_all(action='DESELECT')
 
         for obj in context.objects_in_mode:
@@ -1398,9 +1398,6 @@ class BB_UVs_SelectBoundaries(bpy.types.Operator):
         else:
             self.report({'INFO'}, f"Selected {total_selected} internal boundary edges")
             
-        # Auto-execute unfold after selection
-        if total_selected > 0:
-            bpy.ops.uv.unwrap(method='ANGLE_BASED', margin=0.001)
             
         return {'FINISHED'}
 # ------------------------------ Grid Helper Operators ------------------------------
