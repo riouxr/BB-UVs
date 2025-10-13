@@ -41,16 +41,6 @@
 # BB UVs (Minimal + Move UVs + Normalize+Pack in one click)
 # -----------------------------------------------------------------------------
 
-bl_info = {
-    "name": "BB UVs (Grid Helper + UV tools)",
-    "author": "BB",
-    "version": (1, 6, 1),
-    "blender": (4, 5, 0),
-    "location": "UV Editor & 3D View > Sidebar (N) > BB UVs",
-    "description": "Texel Density + Move/Rotate/Flip + Normalize/Pack + Grid preview (per-face revert). Uses Scene properties directly (no PropertyGroup).",
-    "category": "UV",
-}
-
 import bpy
 import bmesh
 import math
@@ -1543,33 +1533,35 @@ def draw_bb_uvs_panel(self, context):
     S = context.scene
     layout = self.layout
 
-    layout.separator()
-    layout.label(text="Set UI")
-    layout.operator("bb_uvs.set_ui", text="Set UI")
+    if context.space_data.type == 'IMAGE_EDITOR':
+        layout.separator()
+        layout.label(text="Set UI")
+        layout.operator("bb_uvs.set_ui", text="Set UI")
     
     layout.separator()
-    layout.label(text="Select Similar")
-    row = layout.row(align=True)
-    row.operator("bb_uvs.select_similar_topology", text="Topology")
-    row.operator("bb_uvs.select_similar_topology_scale", text="Topology + Scale")
-    
-    
-    layout.label(text="Grid Helper")
-    row = layout.row(align=True)
-    row.operator("bb_uvs.choose_grid_image", text="Browse File", icon='FILEBROWSER')
-    if getattr(S, "bb_grid_image_path", ""):
+    if context.mode == 'OBJECT':
+        layout.label(text="Select Similar")
         row = layout.row(align=True)
-        row.label(text=os.path.basename(bpy.path.abspath(S.bb_grid_image_path)))
-    row = layout.row(align=True)
-    row.operator("bb_uvs.apply_grid", text="Apply Grid", icon='IMAGE_DATA')
-    row.operator("bb_uvs.revert_materials", text="Revert", icon='LOOP_BACK')
-    row = layout.row(align=True)
-    op = row.operator("bb_uvs.set_grid_scale", text="1x"); op.scale = '1'
-    op = row.operator("bb_uvs.set_grid_scale", text="2x"); op.scale = '2'
-    op = row.operator("bb_uvs.set_grid_scale", text="4x"); op.scale = '4'
-    op = row.operator("bb_uvs.set_grid_scale", text="6x"); op.scale = '6'
+        row.operator("bb_uvs.select_similar_topology", text="Topology")
+        row.operator("bb_uvs.select_similar_topology_scale", text="Topology + Scale")
+    
+    if context.space_data.type == 'VIEW_3D':    
+        layout.label(text="Grid Helper")
+        row = layout.row(align=True)
+        row.operator("bb_uvs.choose_grid_image", text="Browse File", icon='FILEBROWSER')
+        if getattr(S, "bb_grid_image_path", ""):
+            row = layout.row(align=True)
+            row.label(text=os.path.basename(bpy.path.abspath(S.bb_grid_image_path)))
+        row = layout.row(align=True)
+        row.operator("bb_uvs.apply_grid", text="Apply Grid", icon='IMAGE_DATA')
+        row.operator("bb_uvs.revert_materials", text="Revert", icon='LOOP_BACK')
+        row = layout.row(align=True)
+        op = row.operator("bb_uvs.set_grid_scale", text="1x"); op.scale = '1'
+        op = row.operator("bb_uvs.set_grid_scale", text="2x"); op.scale = '2'
+        op = row.operator("bb_uvs.set_grid_scale", text="4x"); op.scale = '4'
+        op = row.operator("bb_uvs.set_grid_scale", text="6x"); op.scale = '6'
 
-    layout.separator()
+    #layout.separator()
     layout.label(text="Pack")
     row = layout.row(align=True)
     row.prop(S, "bb_keep_td", text="Keep TD")
@@ -1653,18 +1645,21 @@ def draw_bb_uvs_panel(self, context):
     op = r.operator("bb_uvs.rotate_uvs", text="90° CW",  icon='LOOP_FORWARDS'); op.direction = 'CW'
 
     layout.separator()
-    layout.label(text="Check and fix")
-    if context.mode == 'EDIT_MESH':  # ← Only show selection tools in Edit Mode
-        f = layout.row(); f.scale_y = 1.1
-        f = layout.row(); f.scale_y = 1.1
-        f.operator("bb_uvs.select_cross_udims", text="", icon='SNAP_GRID')
-        f.operator("bb_uvs.select_boundaries", text="", icon='CLIPUV_DEHLT')
-        f.operator("uv.select_overlap", text="", icon='SELECT_INTERSECT')
-        f.operator("bb_uvs.select_zero_area", text="", icon='CANCEL')
-        f = layout.row(); f.scale_y = 1.1
-        f.operator("bb_uvs.select_flipped", text="Select Flipped", icon='UV_SYNC_SELECT')
-        op = f.operator("bb_uvs.flip_uvs", text="Flip Horizontal", icon='ARROW_LEFTRIGHT')
-        op.axis = 'H'
+    # Only show "Check and fix" in the UV Editor (IMAGE_EDITOR)
+    if context.space_data.type == 'IMAGE_EDITOR':
+        layout.separator()
+        layout.label(text="Check and fix")
+        if context.mode == 'EDIT_MESH':
+            f = layout.row(); f.scale_y = 1.1
+            f = layout.row(); f.scale_y = 1.1
+            f.operator("bb_uvs.select_cross_udims", text="", icon='SNAP_GRID')
+            f.operator("bb_uvs.select_boundaries", text="", icon='EDGESEL')
+            f.operator("uv.select_overlap", text="", icon='SELECT_INTERSECT')
+            f.operator("bb_uvs.select_zero_area", text="", icon='CANCEL')
+            f = layout.row(); f.scale_y = 1.1
+            f.operator("bb_uvs.select_flipped", text="Select Flipped", icon='UV_SYNC_SELECT')
+            op = f.operator("bb_uvs.flip_uvs", text="Flip Horizontal", icon='ARROW_LEFTRIGHT')
+            op.axis = 'H'
 
 class UV_PT_BB_UVs(Panel):
     bl_label = "BB UVs"
@@ -1692,41 +1687,55 @@ class VIEW3D_PT_BB_UVs(Panel):
 
 # ------------------------------ Registration (no PropertyGroup; add/remove Scene props) ------------------------------
 
+import bpy
+from bpy.props import FloatProperty, BoolProperty, StringProperty
+
+# -------------------------------------------------------------------------
+# REGISTER / UNREGISTER
+# -------------------------------------------------------------------------
+
 def register():
     # Define Scene-level properties (these do not require a PropertyGroup class)
     bpy.types.Scene.bb_density = FloatProperty(
-        name="Texel Density", default=0.0, min=0.0, precision=3, step=1,
+        name="Texel Density",
+        default=0.0, min=0.0, precision=3, step=1,
         description="Texel density (px/cm)"
     )
     bpy.types.Scene.bb_move_amount = FloatProperty(
-        name="Amount", default=1.0, min=0.0, soft_max=10.0,
+        name="Amount",
+        default=1.0, min=0.0, soft_max=10.0,
         description="Distance in UDIM tiles (1.0 = one tile)"
     )
     bpy.types.Scene.bb_move_selected_only = BoolProperty(
-        name="Contextual Toggle", default=True,
+        name="Contextual Toggle",
+        default=True,
         description="Edit Mode: only selected UVs. Object Mode: only active mesh."
     )
     bpy.types.Scene.bb_grid_image_path = StringProperty(
-        name="Grid Image", default="", subtype='FILE_PATH',
+        name="Grid Image",
+        default="", subtype='FILE_PATH',
         description="Path to the grid/UV texture"
     )
     bpy.types.Scene.bb_keep_td = BoolProperty(
-        name="Keep TD", default=False,
+        name="Keep TD",
+        default=False,
         description="Keep current texel density (skip normalization and scaling during pack)"
     )
     bpy.types.Scene.bb_move_collection = BoolProperty(
         name="Collection",
         default=False,
         description="When ON, move all UVs from objects in the active object's collection"
-    ) 
+    )
     bpy.types.Scene.bb_pack_rotate = BoolProperty(
-        name="Rotation", 
+        name="Rotation",
         default=True,
         description="Allow rotation during packing for better efficiency"
-    )   
+    )
 
-    # Register operators/panels
-    for cls in (
+    # ---------------------------------------------------------------------
+    # Register all operators and panels
+    # ---------------------------------------------------------------------
+    classes = (
         BB_Texel_Density_Check, BB_Texel_Density_Set,
         BB_UVs_MoveUVs, BB_UVs_RotateUVs, BB_UVs_NormalizePack,
         BB_UVs_SetUI, BB_UVs_FlipUVs, BB_UVs_SetMoveContext, BB_UVs_ToggleMoveHighlight,
@@ -1740,33 +1749,41 @@ def register():
         BB_UVs_SelectCrossUDIMs,
         BB_UVs_SelectBoundaries,
         BB_UVs_SelectZeroArea,
-    ):
+    )
+
+    for cls in classes:
         try:
             bpy.utils.register_class(cls)
-        except Exception:
-            try:
-                bpy.utils.unregister_class(cls)
-            except Exception:
-                pass
+        except ValueError:
+            # If already registered (e.g. live-reload), unregister first
+            bpy.utils.unregister_class(cls)
             bpy.utils.register_class(cls)
 
+
 def unregister():
-    if hasattr(bpy.types.Scene, "bb_keep_td"):
-        try:
-            delattr(bpy.types.Scene, "bb_keep_td")
-        except Exception:
-            pass    
-    # Remove Scene-level properties if they exist
-    for prop in ("bb_density", "bb_move_amount", "bb_move_selected_only", 
-             "bb_grid_image_path", "bb_move_collection", "bb_pack_rotate",):
+    # ---------------------------------------------------------------------
+    # Remove Scene-level properties
+    # ---------------------------------------------------------------------
+    props = (
+        "bb_density",
+        "bb_move_amount",
+        "bb_move_selected_only",
+        "bb_grid_image_path",
+        "bb_keep_td",
+        "bb_move_collection",
+        "bb_pack_rotate",
+    )
+    for prop in props:
         if hasattr(bpy.types.Scene, prop):
             try:
                 delattr(bpy.types.Scene, prop)
             except Exception:
                 pass
 
-    # Unregister operators/panels
-    for cls in reversed((
+    # ---------------------------------------------------------------------
+    # Unregister classes in reverse order
+    # ---------------------------------------------------------------------
+    classes = (
         BB_Texel_Density_Check, BB_Texel_Density_Set,
         BB_UVs_MoveUVs, BB_UVs_RotateUVs, BB_UVs_NormalizePack,
         BB_UVs_SetUI, BB_UVs_FlipUVs, BB_UVs_SetMoveContext, BB_UVs_ToggleMoveHighlight,
@@ -1780,11 +1797,14 @@ def unregister():
         BB_UVs_SelectCrossUDIMs,
         BB_UVs_SelectBoundaries,
         BB_UVs_SelectZeroArea,
-    )):
+    )
+    for cls in reversed(classes):
         try:
             bpy.utils.unregister_class(cls)
         except Exception:
             pass
 
+
+# Allow running directly from Text Editor (optional)
 if __name__ == "__main__":
     register()
