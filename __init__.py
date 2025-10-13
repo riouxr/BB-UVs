@@ -582,75 +582,55 @@ class BB_UVs_MoveUVs(Operator):
             ('DOWN_LEFT', "Down Left", ""), ('DOWN_RIGHT', "Down Right", ""),
         ], name="Direction", default='UP'
     )
+
     def execute(self, context):
         S = _S(context)
-        active = context.view_layer.objects.active
+        active = context.active_object
 
-        # --- Determine direction
+        # Movement vector based on direction
         amt = S.bb_move_amount
         dx = dy = 0.0
         if self.direction == 'UP': dy = amt
         elif self.direction == 'DOWN': dy = -amt
         elif self.direction == 'LEFT': dx = -amt
         elif self.direction == 'RIGHT': dx = amt
-        elif self.direction == 'UP_LEFT': dx = -amt; dy = amt
-        elif self.direction == 'UP_RIGHT': dx = amt; dy = amt
-        elif self.direction == 'DOWN_LEFT': dx = -amt; dy = -amt
-        elif self.direction == 'DOWN_RIGHT': dx = amt; dy = -amt
+        elif self.direction == 'UP_LEFT': dx, dy = -amt, amt
+        elif self.direction == 'UP_RIGHT': dx, dy = amt, amt
+        elif self.direction == 'DOWN_LEFT': dx, dy = -amt, -amt
+        elif self.direction == 'DOWN_RIGHT': dx, dy = amt, -amt
 
-        mode = context.mode
+        targets = []
 
-        if mode == 'EDIT_MESH':
-            only_sel = S.bb_move_selected_only
-            
-            # Correct logic:
-            if only_sel:
-                # Highlighted mode - only active object, move all its UVs
-                if not _object_is_uv_mesh(active):
-                    self.report({'WARNING'}, "Active object is not a mesh with UVs")
-                    return {'CANCELLED'}
+        # 🟢 Match logic from working Move UVs operator
+        if S.bb_move_selected_only:
+            if _object_is_uv_mesh(active):
                 targets = [active]
-                move_only_selected = False  # Move all UVs in the object
-            else:
-                # Selected mode - all objects in edit mode, move all their UVs
-                targets = [o for o in context.objects_in_mode if _object_is_uv_mesh(o)]
-                move_only_selected = False  # Move all UVs in each object
-                
-            if not targets:
-                self.report({'WARNING'}, "No meshes with UVs in edit mode")
-                return {'CANCELLED'}
-                
-            for o in targets:
-                _move_uvs_edit(o, dx, dy, only_selected=move_only_selected)
-            try:
-                context.view_layer.update()
-            except Exception:
-                pass
-            return {'FINISHED'}
 
-        # --- Highlighted (active only)
-        elif S.bb_move_selected_only:
-            if not _object_is_uv_mesh(active):
-                self.report({'WARNING'}, "Active object is not a mesh with UVs")
-                return {'CANCELLED'}
-            targets = [active]
+        elif S.bb_move_collection:
+            # Only move UVs of objects in the same collection as the active object
+            if active and active.users_collection:
+                active_coll = active.users_collection[0]  # same logic as working button
+                targets = [
+                    o for o in active_coll.objects
+                    if _object_is_uv_mesh(o)
+                ]
 
-        # --- Selected (all selected meshes)
         else:
-            targets = [o for o in context.selected_objects if _object_is_uv_mesh(o)]
+            # Default: all selected mesh objects
+            targets = [
+                o for o in context.selected_objects
+                if _object_is_uv_mesh(o)
+            ]
 
+        # Apply the move
         for o in targets:
-            if o.mode == 'EDIT':
-                _move_uvs_edit(o, dx, dy, only_selected=False)
-            else:
-                _move_uvs_object(o, dx, dy)
+            _move_uvs_object(o, dx, dy)
 
-        try:
+        if targets:
             context.view_layer.update()
-        except Exception:
-            pass
 
         return {'FINISHED'}
+
 
 class BB_UVs_SelectSimilarTopology(Operator):
     bl_idname = "bb_uvs.select_similar_topology"
