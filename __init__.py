@@ -4,8 +4,6 @@
 # Derived work based on:
 # • Texel Density Checker — https://github.com/mrven/Blender-Texel-Density-Checker
 # Original author: Ivan Vostrikov (mrven)
-# • Univ (Universal UV Tools) — https://extensions.blender.org/add-ons/univ/
-# Portions of the normalize/pack workflow and related ideas are adapted.
 #
 # This file is part of a Blender add-on that includes code and ideas derived
 # from the projects “Texel Density Checker” by Ivan Vostrikov (mrven) and
@@ -46,7 +44,7 @@
 bl_info = {
     "name": "BB UVs (Grid Helper + UV tools)",
     "author": "BB",
-    "version": (1, 6, 0),
+    "version": (1, 6, 1),
     "blender": (4, 5, 0),
     "location": "UV Editor & 3D View > Sidebar (N) > BB UVs",
     "description": "Texel Density + Move/Rotate/Flip + Normalize/Pack + Grid preview (per-face revert). Uses Scene properties directly (no PropertyGroup).",
@@ -133,7 +131,7 @@ class BB_UVs_SetGridScale(Operator):
         return {'FINISHED'}
 
 def _set_all_faces_to_mat(obj, mat_index):
-    if obj.data.is_editmode:
+    if obj.mode == 'EDIT':
         bm = bmesh.from_edit_mesh(obj.data)
         for f in bm.faces:
             f.material_index = mat_index
@@ -146,7 +144,7 @@ def _set_all_faces_to_mat(obj, mat_index):
 def _apply_per_face_indices(obj, indices):
     if not indices:
         return
-    if obj.data.is_editmode:
+    if obj.mode == 'EDIT':
         bm = bmesh.from_edit_mesh(obj.data)
         bm.faces.ensure_lookup_table()
         count = min(len(indices), len(bm.faces))
@@ -473,6 +471,7 @@ def _flip_uvs_group_in_bmesh(bm, axis='H', only_selected=True):
         uv = l[uv_layer].uv
         if axis == 'H': uv.x = 2*cx - uv.x
         elif axis == 'V': uv.y = 2*cy - uv.y
+        
 
 # ------------------------------ TD / Move / Rotate / Flip Operators ------------------------------
 
@@ -514,7 +513,7 @@ class BB_Texel_Density_Set(Operator):
             if total_area <= 0: continue
             current_td = sum(val * (area / total_area) for val, area in lst) or 0.0001
             scale = target_td / current_td
-            if o.data.is_editmode:
+            if o.mode == 'EDIT':
                 bm = bmesh.from_edit_mesh(o.data)
                 uv_layer = bm.loops.layers.uv.active
                 if uv_layer:
@@ -535,13 +534,45 @@ class BB_Texel_Density_Set(Operator):
                 bm.free()
         return {'FINISHED'}
 
+class BB_UVs_SetMoveCollection(Operator):
+    bl_idname = "bb_uvs.set_move_collection"
+    bl_label = "Set Move Collection"
+    bl_options = {'INTERNAL', 'UNDO'}
+
+    def execute(self, context):
+        S = _S(context)
+        S.bb_move_collection = not bool(S.bb_move_collection)
+        if S.bb_move_collection:
+            S.bb_move_selected_only = False
+            active = context.view_layer.objects.active
+            if active:
+                colls = active.users_collection
+                if colls:
+                    col_objs = set(o for c in colls for o in c.objects if _object_is_uv_mesh(o))
+                    #print(f"[Collection Toggle] Active: {active.name}, Collection objects with UVs: {[o.name for o in col_objs]}")
+                    if col_objs:
+                        bpy.ops.object.select_all(action='DESELECT')
+                        for o in col_objs:
+                            o.select_set(True)
+                        context.view_layer.objects.active = active
+               # else:
+                    #print("[Collection Toggle] Active object is not in any collection")
+            #else:
+               # print("[Collection Toggle] No active object")
+        #else:
+            #print("[Collection Toggle] Collection mode OFF")
+        return {'FINISHED'}
+
 class BB_UVs_SetMoveContext(Operator):
     bl_idname = "bb_uvs.set_move_context"
     bl_label = "Set Move Context"
     bl_options = {'INTERNAL', 'UNDO'}
     set_selected: BoolProperty(name="Set Selected Mode", default=True)
     def execute(self, context):
-        _S(context).bb_move_selected_only = bool(self.set_selected); return {'FINISHED'}
+        S = _S(context)
+        S.bb_move_selected_only = bool(self.set_selected)
+        S.bb_move_collection = False   # ← add this line here
+        return {'FINISHED'}
 
 class BB_UVs_ToggleMoveHighlight(Operator):
     bl_idname = "bb_uvs.toggle_move_highlight"
@@ -562,8 +593,11 @@ class BB_UVs_MoveUVs(Operator):
         ], name="Direction", default='UP'
     )
     def execute(self, context):
-        S = _S(context); amt = float(S.bb_move_amount)
-        if amt == 0.0: return {'CANCELLED'}
+        S = _S(context)
+        active = context.view_layer.objects.active
+
+        # --- Determine direction
+        amt = S.bb_move_amount
         dx = dy = 0.0
         if self.direction == 'UP': dy = amt
         elif self.direction == 'DOWN': dy = -amt
@@ -573,30 +607,260 @@ class BB_UVs_MoveUVs(Operator):
         elif self.direction == 'UP_RIGHT': dx = amt; dy = amt
         elif self.direction == 'DOWN_LEFT': dx = -amt; dy = -amt
         elif self.direction == 'DOWN_RIGHT': dx = amt; dy = -amt
-        active = context.view_layer.objects.active
-        mode = getattr(active, "mode", "OBJECT") if active else "OBJECT"
-        if mode == 'EDIT':
-            if S.bb_move_selected_only:
-                targets = [o for o in context.objects_in_mode if _object_is_uv_mesh(o)]
-                for o in targets: _move_uvs_edit(o, dx, dy, only_selected=True)
-            else:
+
+        mode = context.mode
+
+        if mode == 'EDIT_MESH':
+            only_sel = S.bb_move_selected_only
+            
+            # Correct logic:
+            if only_sel:
+                # Highlighted mode - only active object, move all its UVs
                 if not _object_is_uv_mesh(active):
-                    self.report({'WARNING'}, "Active object is not a mesh with UVs"); return {'CANCELLED'}
-                _move_uvs_edit(active, dx, dy, only_selected=False)
-        else:
-            selected = context.selected_objects[:]
-            if S.bb_move_selected_only:
-                if not _object_is_uv_mesh(active):
-                    self.report({'WARNING'}, "Active object is not a mesh with UVs"); return {'CANCELLED'}
+                    self.report({'WARNING'}, "Active object is not a mesh with UVs")
+                    return {'CANCELLED'}
                 targets = [active]
+                move_only_selected = False  # Move all UVs in the object
             else:
-                targets = [o for o in selected if _object_is_uv_mesh(o)]
+                # Selected mode - all objects in edit mode, move all their UVs
+                targets = [o for o in context.objects_in_mode if _object_is_uv_mesh(o)]
+                move_only_selected = False  # Move all UVs in each object
+                
             if not targets:
-                self.report({'WARNING'}, "No mesh with UVs to move"); return {'CANCELLED'}
-            for o in targets: _move_uvs_object(o, dx, dy)
-        try: bpy.ops.bb_uvs.texel_density_check()
-        except Exception: pass
+                self.report({'WARNING'}, "No meshes with UVs in edit mode")
+                return {'CANCELLED'}
+                
+            for o in targets:
+                _move_uvs_edit(o, dx, dy, only_selected=move_only_selected)
+            try:
+                context.view_layer.update()
+            except Exception:
+                pass
+            return {'FINISHED'}
+
+        # --- Highlighted (active only)
+        elif S.bb_move_selected_only:
+            if not _object_is_uv_mesh(active):
+                self.report({'WARNING'}, "Active object is not a mesh with UVs")
+                return {'CANCELLED'}
+            targets = [active]
+
+        # --- Selected (all selected meshes)
+        else:
+            targets = [o for o in context.selected_objects if _object_is_uv_mesh(o)]
+
+        for o in targets:
+            if o.mode == 'EDIT':
+                _move_uvs_edit(o, dx, dy, only_selected=False)
+            else:
+                _move_uvs_object(o, dx, dy)
+
+        try:
+            context.view_layer.update()
+        except Exception:
+            pass
+
         return {'FINISHED'}
+
+class BB_UVs_SelectSimilarTopology(Operator):
+    bl_idname = "bb_uvs.select_similar_topology"
+    bl_label = "Sim"
+    bl_options = {'REGISTER', 'UNDO'}
+    include_scale: BoolProperty(default=False)
+
+    def execute(self, context):
+        active = context.active_object
+        if not _object_is_uv_mesh(active):
+            self.report({'WARNING'}, "Active object is not a valid mesh with UVs")
+            return {'CANCELLED'}
+        ref_obj = active
+        ref_verts = len(ref_obj.data.vertices)
+        ref_faces = len(ref_obj.data.polygons)
+        ref_scale = ref_obj.scale.copy()
+
+        bpy.ops.object.select_all(action='DESELECT')
+        ref_obj.select_set(True)
+        context.view_layer.objects.active = ref_obj
+
+        for obj in context.view_layer.objects:
+            if obj == ref_obj or not _object_is_uv_mesh(obj):
+                continue
+            if len(obj.data.vertices) != ref_verts or len(obj.data.polygons) != ref_faces:
+                continue
+            if self.include_scale and not all(isclose(obj.scale[i], ref_scale[i], rel_tol=1e-6) for i in range(3)):
+                continue
+            obj.select_set(True)
+        return {'FINISHED'}
+
+class BB_UVs_SelectCrossUDIMs(Operator):
+    bl_idname = "bb_uvs.select_cross_udims"
+    bl_label = "Cross UDIMs"
+    bl_description = "Select UV faces that span across multiple UDIM tiles"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'EDIT_MESH' and (obj := context.active_object) and obj.type == 'MESH'
+
+    def execute(self, context):
+        total_counter = 0
+        sync = context.tool_settings.use_uv_select_sync
+
+        # Deselect based on sync mode
+        if sync:
+            bpy.ops.mesh.select_all(action='DESELECT')
+        else:
+            bpy.ops.uv.select_all(action='DESELECT')
+
+        for obj in context.objects_in_mode:
+            if not _object_is_uv_mesh(obj):
+                continue
+
+            bm = bmesh.from_edit_mesh(obj.data)
+            uv_layer = bm.loops.layers.uv.active
+            if not uv_layer:
+                continue
+
+            local_counter = 0
+            for f in bm.faces:
+                if sync and f.hide:
+                    continue
+
+                # Collect all UDIM tile coordinates (floor of UVs)
+                tiles = set()
+                for loop in f.loops:
+                    uv = loop[uv_layer].uv
+                    tile_u = math.floor(uv.x)
+                    tile_v = math.floor(uv.y)
+                    tiles.add((tile_u, tile_v))
+                    if len(tiles) > 1:
+                        # Early exit: already crosses UDIMs
+                        break
+
+                if len(tiles) > 1:
+                    if sync:
+                        f.select = True
+                    else:
+                        for loop in f.loops:
+                            loop[uv_layer].select = True
+                            loop[uv_layer].select_edge = True
+                    local_counter += 1
+
+            total_counter += local_counter
+            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+
+        if total_counter == 0:
+            self.report({'INFO'}, "No faces crossing UDIM boundaries found")
+        else:
+            self.report({'INFO'}, f"Selected {total_counter} face(s) crossing UDIMs")
+
+        return {'FINISHED'}
+    
+class BB_UVs_SelectSimilarTopologyScale(Operator):
+    bl_idname = "bb_uvs.select_similar_topology_scale"
+    bl_label = "Sim All"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        bpy.ops.bb_uvs.select_similar_topology(include_scale=True)
+        return {'FINISHED'}
+    
+class BB_UVs_MoveUVsInteractive(bpy.types.Operator):
+    bl_idname = "bb_uvs.move_uvs_interactive"
+    bl_label = "Move UVs (Interactive Toggle)"
+    bl_options = {'REGISTER', 'UNDO', 'GRAB_CURSOR', 'BLOCKING'}
+
+    _dragging = False
+    _last_mouse = None
+    _total_dx = 0.0
+    _total_dy = 0.0
+
+    def invoke(self, context, event):
+        S = _S(context)
+        if context.mode != 'OBJECT':
+            self.report({'WARNING'}, "Interactive move only available in Object Mode")
+            return {'CANCELLED'}
+        self._dragging = False
+        self._last_mouse = (event.mouse_x, event.mouse_y)
+        self._total_dx = 0.0
+        self._total_dy = 0.0
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        S = _S(context)
+        active = context.view_layer.objects.active
+
+        if event.type == 'MOUSEMOVE':
+            if not self._dragging:
+                return {'RUNNING_MODAL'}
+            delta_x = event.mouse_x - self._last_mouse[0]
+            delta_y = event.mouse_y - self._last_mouse[1]
+            self._last_mouse = (event.mouse_x, event.mouse_y)
+            sensitivity = 0.02  # Adjust as needed (pixels to UDIM fraction)
+            dx = delta_x * sensitivity
+            dy = delta_y * sensitivity
+            self._total_dx += dx
+            self._total_dy += dy
+
+            # Apply incremental move
+            if S.bb_move_collection and active:
+                colls = active.users_collection
+                if colls:
+                    col_objs = set(o for c in colls for o in c.objects if _object_is_uv_mesh(o))
+                    for o in col_objs:
+                        _move_uvs_object(o, dx, dy)
+                    context.view_layer.update()
+
+            elif S.bb_move_selected_only:
+                if _object_is_uv_mesh(active):
+                    _move_uvs_object(active, dx, dy)
+                    context.view_layer.update()
+
+            else:
+                targets = [o for o in context.selected_objects if _object_is_uv_mesh(o)]
+                for o in targets:
+                    _move_uvs_object(o, dx, dy)
+                context.view_layer.update()
+
+        elif event.type == 'LEFTMOUSE':
+            if event.value == 'PRESS':
+                self._dragging = True
+                self._last_mouse = (event.mouse_x, event.mouse_y)
+                return {'RUNNING_MODAL'}
+            elif event.value == 'RELEASE':
+                if self._dragging:
+                    self._dragging = False
+                return {'FINISHED'}
+
+        elif event.type in {'RIGHTMOUSE', 'ESC'}:
+            # Revert total move
+            neg_dx = -self._total_dx
+            neg_dy = -self._total_dy
+            if S.bb_move_collection and active:
+                colls = active.users_collection
+                if colls:
+                    col_objs = set(o for c in colls for o in c.objects if _object_is_uv_mesh(o))
+                    for o in col_objs:
+                        _move_uvs_object(o, neg_dx, neg_dy)
+                    context.view_layer.update()
+
+            elif S.bb_move_selected_only:
+                if _object_is_uv_mesh(active):
+                    _move_uvs_object(active, neg_dx, neg_dy)
+                    context.view_layer.update()
+
+            else:
+                targets = [o for o in context.selected_objects if _object_is_uv_mesh(o)]
+                for o in targets:
+                    _move_uvs_object(o, neg_dx, neg_dy)
+                context.view_layer.update()
+
+            self._dragging = False
+            return {'CANCELLED'}
+
+        return {'RUNNING_MODAL'}
+# ------------------------------ Rotate / Flip / Normalize + Pack ------------------------------
 
 class BB_UVs_RotateUVs(Operator):
     bl_idname = "bb_uvs.rotate_uvs"
@@ -612,8 +876,8 @@ class BB_UVs_RotateUVs(Operator):
         active = context.view_layer.objects.active
         if not _object_is_uv_mesh(active):
             self.report({'WARNING'}, "No active mesh with UVs"); return {'CANCELLED'}
-        mode = getattr(active, "mode", "OBJECT")
-        if mode == 'EDIT':
+        mode = context.mode
+        if mode == 'EDIT_MESH':
             targets = [o for o in context.objects_in_mode if _object_is_uv_mesh(o)]
             for o in targets:
                 bm = bmesh.from_edit_mesh(o.data)
@@ -640,8 +904,8 @@ class BB_UVs_FlipUVs(Operator):
         active = context.view_layer.objects.active
         if not _object_is_uv_mesh(active):
             self.report({'WARNING'}, "No active mesh with UVs"); return {'CANCELLED'}
-        mode = getattr(active, "mode", "OBJECT")
-        if mode == 'EDIT':
+        mode = context.mode
+        if mode == 'EDIT_MESH':
             targets = [o for o in context.objects_in_mode if _object_is_uv_mesh(o)]
             for o in targets:
                 bm = bmesh.from_edit_mesh(o.data)
@@ -660,6 +924,7 @@ class BB_UVs_NormalizePack(Operator):
     bl_label = "Pack Together"
     bl_options = {'REGISTER', 'UNDO'}
     @staticmethod
+
     def _call_pack(args):
         try: return bpy.ops.uv.pack_islands('EXEC_DEFAULT', **args)
         except TypeError: pass
@@ -671,9 +936,10 @@ class BB_UVs_NormalizePack(Operator):
         except TypeError: pass
         args4 = {"udim_source": args.get("udim_source", "ACTIVE_UDIM"),
                  "margin_method": args.get("margin_method", "FRACTION"),
-                 "margin": args.get("margin", 0.00390625)}
+                 "margin": args.get("margin", 0.00195312)}
         return bpy.ops.uv.pack_islands('EXEC_DEFAULT', **args4)
     @staticmethod
+
     def _snap_uvs_to_first_udim_all():
         objs = [o for o in bpy.context.objects_in_mode if o.type == 'MESH']
         if not objs: return
@@ -702,6 +968,7 @@ class BB_UVs_NormalizePack(Operator):
                     uv.x += du; uv.y += dv
             bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
     @staticmethod
+
     def _compute_global_tot_fac(only_selected=True):
         total_area_3d = 0.0; total_area_uv = 0.0
         objs = [o for o in bpy.context.objects_in_mode if o.type == 'MESH']
@@ -716,6 +983,7 @@ class BB_UVs_NormalizePack(Operator):
         if total_area_uv <= 1e-12 or total_area_3d <= 1e-12: return None
         return total_area_3d / total_area_uv
     @staticmethod
+
     def _normalize_all_edit_meshes_to_fac(tot_fac, only_selected=True):
         objs = [o for o in bpy.context.objects_in_mode if o.type == 'MESH']
         for obj in objs:
@@ -740,25 +1008,27 @@ class BB_UVs_NormalizePack(Operator):
                         uv.y = (uv.y - cy) * scale + cy
             bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
     def execute(self, context):
+        S = _S(context)
         args = {
-            "udim_source": "ACTIVE_UDIM", "rotate": False, "scale": True,
+            "udim_source": "ACTIVE_UDIM", "rotate": S.bb_pack_rotate, "scale": not S.bb_keep_td,
             "margin_method": "FRACTION", "margin": 0.00390625, "pin": False,
             "merge_overlap": False, "pin_method": "LOCKED", "shape_method": "CONCAVE",
         }
         active = context.view_layer.objects.active
         if not _object_is_uv_mesh(active):
             self.report({'WARNING'}, "No active mesh with UVs"); return {'CANCELLED'}
-        start_mode = getattr(active, "mode", "OBJECT")
-        if start_mode == 'EDIT':
+        start_mode = context.mode
+        if start_mode == 'EDIT_MESH':
             ts = context.tool_settings
             ts.mesh_select_mode = (False, False, True)
             bpy.ops.mesh.select_all(action='SELECT')
             try: bpy.ops.uv.select_all(action='SELECT')
             except Exception: pass
-            tot_fac = self._compute_global_tot_fac(only_selected=True)
-            if tot_fac is None:
-                self.report({'WARNING'}, "Not enough UV/mesh data to normalize"); return {'CANCELLED'}
-            self._normalize_all_edit_meshes_to_fac(tot_fac, only_selected=True)
+            if not S.bb_keep_td:
+                tot_fac = self._compute_global_tot_fac(only_selected=True)
+                if tot_fac is None:
+                    self.report({'WARNING'}, "Not enough UV/mesh data to normalize"); return {'CANCELLED'}
+                self._normalize_all_edit_meshes_to_fac(tot_fac, only_selected=True)
             self._call_pack(args); self._snap_uvs_to_first_udim_all()
             return {'FINISHED'}
         prev_active = active; prev_selection = context.selected_objects[:]
@@ -774,15 +1044,16 @@ class BB_UVs_NormalizePack(Operator):
         bpy.ops.mesh.select_all(action='SELECT')
         try: bpy.ops.uv.select_all(action='SELECT')
         except Exception: pass
-        tot_fac = self._compute_global_tot_fac(only_selected=False)
-        if tot_fac is None:
-            bpy.ops.object.mode_set(mode='OBJECT')
-            for o in bpy.data.objects: o.select_set(False)
-            for o in prev_selection:
-                if o and o.name in bpy.data.objects: o.select_set(True)
-            context.view_layer.objects.active = prev_active
-            self.report({'WARNING'}, "Not enough UV/mesh data to normalize"); return {'CANCELLED'}
-        self._normalize_all_edit_meshes_to_fac(tot_fac, only_selected=False)
+        if not S.bb_keep_td:
+            tot_fac = self._compute_global_tot_fac(only_selected=False)
+            if tot_fac is None:
+                bpy.ops.object.mode_set(mode='OBJECT')
+                for o in bpy.data.objects: o.select_set(False)
+                for o in prev_selection:
+                    if o and o.name in bpy.data.objects: o.select_set(True)
+                context.view_layer.objects.active = prev_active
+                self.report({'WARNING'}, "Not enough UV/mesh data to normalize"); return {'CANCELLED'}
+            self._normalize_all_edit_meshes_to_fac(tot_fac, only_selected=False)
         self._call_pack(args); self._snap_uvs_to_first_udim_all()
         bpy.ops.object.mode_set(mode='OBJECT')
         for o in bpy.data.objects: o.select_set(False)
@@ -796,19 +1067,20 @@ class BB_UVs_PackIndividually(Operator):
     bl_label = "Pack Individually"
     bl_options = {'REGISTER', 'UNDO'}
     def execute(self, context):
+        S = _S(context)
         args = {
-            "udim_source": "ACTIVE_UDIM", "rotate": False, "scale": True,
+            "udim_source": "ACTIVE_UDIM", "rotate": S.bb_pack_rotate, "scale": not S.bb_keep_td,
             "margin_method": "FRACTION", "margin": 0.00390625, "pin": False,
             "merge_overlap": False, "pin_method": "LOCKED", "shape_method": "CONCAVE",
         }
         active = context.view_layer.objects.active
         if not _object_is_uv_mesh(active):
             self.report({'WARNING'}, "No active mesh with UVs"); return {'CANCELLED'}
-        start_mode = getattr(active, "mode", "OBJECT")
+        start_mode = context.mode
         original_selection = context.selected_objects[:]
         original_active = active
-        original_edit_objs = list(context.objects_in_mode) if start_mode == 'EDIT' else []
-        if start_mode == 'EDIT':
+        original_edit_objs = list(context.objects_in_mode) if start_mode == 'EDIT_MESH' else []
+        if start_mode == 'EDIT_MESH':
             targets = [o for o in original_edit_objs if _object_is_uv_mesh(o)]
         else:
             targets = [o for o in original_selection if _object_is_uv_mesh(o)]
@@ -819,7 +1091,7 @@ class BB_UVs_PackIndividually(Operator):
             _normalize_islands_in_bmesh(bm, xy_independent=True, only_selected=False, respect_aspect=True)
             bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
         for obj in targets:
-            if getattr(context.view_layer.objects.active, "mode", "OBJECT") == 'EDIT':
+            if context.mode == 'EDIT_MESH':
                 bpy.ops.object.mode_set(mode='OBJECT')
             for o in bpy.data.objects: o.select_set(False)
             obj.select_set(True); context.view_layer.objects.active = obj
@@ -829,7 +1101,8 @@ class BB_UVs_PackIndividually(Operator):
             bpy.ops.mesh.select_all(action='SELECT')
             try: bpy.ops.uv.select_all(action='SELECT')
             except Exception: pass
-            _normalize_single(obj)
+            if not S.bb_keep_td:
+                _normalize_single(obj)
             BB_UVs_NormalizePack._call_pack(args)
             BB_UVs_NormalizePack._snap_uvs_to_first_udim_all()
             bpy.ops.object.mode_set(mode='OBJECT')
@@ -837,7 +1110,7 @@ class BB_UVs_PackIndividually(Operator):
         for o in original_selection:
             if o and o.name in bpy.data.objects: o.select_set(True)
         context.view_layer.objects.active = original_active
-        if start_mode == 'EDIT':
+        if start_mode == 'EDIT_MESH':
             for o in bpy.data.objects: o.select_set(False)
             for o in original_edit_objs:
                 if o and o.name in bpy.data.objects: o.select_set(True)
@@ -845,6 +1118,294 @@ class BB_UVs_PackIndividually(Operator):
                 context.view_layer.objects.active = original_edit_objs[0]
                 bpy.ops.object.mode_set(mode='EDIT')
         return {'FINISHED'}
+
+class BB_UVs_SelectFlipped(Operator):
+    bl_idname = "bb_uvs.select_flipped"
+    bl_label = "Select Flipped"
+    bl_description = "Select flipped UV faces"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'EDIT_MESH' and (obj := context.active_object) and obj.type == 'MESH'
+
+    def execute(self, context):
+        total_counter = 0
+        
+        # Get sync setting
+        sync = context.tool_settings.use_uv_select_sync
+        
+        # Deselect all first based on sync mode
+        if sync:
+            bpy.ops.mesh.select_all(action='DESELECT')
+        else:
+            bpy.ops.uv.select_all(action='DESELECT')
+        
+        # Process all objects in edit mode
+        for obj in context.objects_in_mode:
+            if not _object_is_uv_mesh(obj):
+                continue
+                
+            bm = bmesh.from_edit_mesh(obj.data)
+            uv_layer = bm.loops.layers.uv.active
+            if not uv_layer:
+                continue
+                
+            # Calculate loop triangles for accurate area detection
+            loop_triangles = bm.calc_loop_triangles()
+            
+            local_counter = 0
+            for tris in loop_triangles:
+                # Check if we should process this face based on sync mode
+                if sync:
+                    if tris[0].face.hide:
+                        continue
+                else:
+                    # In non-sync mode, we want to check ALL faces, not just selected ones
+                    # So we don't filter by selection here
+                    pass
+                
+                # Get UV coordinates for the triangle
+                a = tris[0][uv_layer].uv
+                b = tris[1][uv_layer].uv
+                c = tris[2][uv_layer].uv
+
+                # Use the exact same area calculation as UniV
+                area = a.cross(b) + b.cross(c) + c.cross(a)
+                
+                # If area is negative, the face is flipped
+                if area < 0:
+                    if sync:
+                        # In sync mode, select the mesh face
+                        tris[0].face.select = True
+                    else:
+                        # In non-sync mode, select the UVs
+                        for loop in tris[0].face.loops:
+                            loop[uv_layer].select = True
+                            loop[uv_layer].select_edge = True  # Important: also select edges
+                    local_counter += 1
+            
+            total_counter += local_counter
+            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+        
+        if not total_counter:
+            self.report({'INFO'}, 'Flipped faces not found')
+        else:
+            self.report({'INFO'}, f'Found {total_counter} flipped faces')
+            
+        return {'FINISHED'}
+
+class BB_UVs_SelectBoundaries(bpy.types.Operator):
+    bl_idname = "bb_uvs.select_boundaries"
+    bl_label = "Select Boundaries"
+    bl_description = "Select internal UV island boundary edges (holes)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'EDIT_MESH' and (obj := context.active_object) and obj.type == 'MESH'
+
+    def execute(self, context):
+        from collections import defaultdict
+        import math
+
+        total_selected = 0
+        sync = context.tool_settings.use_uv_select_sync
+        if sync:
+            self.report({'WARNING'}, "Disable UV Sync for UV boundary selection")
+            return {'CANCELLED'}
+
+        bpy.ops.uv.select_all(action='DESELECT')
+
+        for obj in context.objects_in_mode:
+            if not _object_is_uv_mesh(obj):
+                continue
+
+            bm = bmesh.from_edit_mesh(obj.data)
+            uv_layer = bm.loops.layers.uv.active
+            if not uv_layer:
+                continue
+
+            islands = _collect_uv_islands(bm, uv_layer, only_selected=False)
+            for island in islands:
+                # --- build oriented-edge map and usage counts (unordered) ---
+                counts = defaultdict(int)           # keyed by frozenset({k1,k2})
+                oriented = {}                       # keyed by (k1,k2) -> (face, i)
+                uv_by_key = {}                      # keyed by uv key -> Vector2 (uv coords)
+
+                for face in island:
+                    loops = face.loops
+                    n = len(loops)
+                    for i in range(n):
+                        l1 = loops[i]
+                        l2 = loops[(i + 1) % n]
+                        k1 = _uv_key(l1[uv_layer].uv)
+                        k2 = _uv_key(l2[uv_layer].uv)
+                        counts[frozenset((k1, k2))] += 1
+                        oriented[(k1, k2)] = (face, i)
+                        # store uv coords for both keys (overwrite is fine)
+                        uv_by_key[k1] = l1[uv_layer].uv.copy()
+                        uv_by_key[k2] = l2[uv_layer].uv.copy()
+
+                # boundary = unordered edges used exactly once
+                boundary_oriented = {}
+                for (a, b), (face, i) in oriented.items():
+                    if counts[frozenset((a, b))] == 1:
+                        boundary_oriented[(a, b)] = (face, i)
+
+                if not boundary_oriented:
+                    continue
+
+                # adjacency of boundary graph using oriented vertex keys
+                adj = defaultdict(list)
+                for (a, b) in boundary_oriented.keys():
+                    adj[a].append(b)
+                    # note: do not add adj[b].append(a) here as we keep orientation edges present
+                    # but for navigation we want to know all neighbors at a vertex:
+                    # add both so we can examine candidate outgoing edges from any vertex
+                    adj[b]  # ensure key exists
+
+                # However we do need neighbor sets for choosing next directed edge:
+                # Build neighbor list per vertex from the oriented boundary edges (outgoing)
+                outgoing = defaultdict(list)
+                for (a, b) in boundary_oriented.keys():
+                    outgoing[a].append(b)
+
+                # used directed edges set
+                used = set()
+                loops = []
+
+                # helper: compute signed angle from v_prev->v_curr to v_curr->v_next in UV space
+                def angle_between(prev_k, curr_k, next_k):
+                    p = uv_by_key[prev_k]
+                    c = uv_by_key[curr_k]
+                    npt = uv_by_key[next_k]
+                    v1x = c.x - p.x
+                    v1y = c.y - p.y
+                    v2x = npt.x - c.x
+                    v2y = npt.y - c.y
+                    # compute atan2 of cross/dot to get signed angle
+                    cross = v1x * v2y - v1y * v2x
+                    dot = v1x * v2x + v1y * v2y
+                    return math.atan2(cross, dot)
+
+                # Walk every directed boundary edge that hasn't been used yet.
+                for start_edge in list(boundary_oriented.keys()):
+                    if start_edge in used:
+                        continue
+
+                    # initialize traversal from this directed edge
+                    a, b = start_edge
+                    cur_prev = a
+                    cur = b
+                    path = [start_edge]
+                    used.add(start_edge)
+
+                    # continue walking
+                    safety = 0
+                    while True:
+                        safety += 1
+                        if safety > 10000:
+                            break  # avoid infinite loops in degenerate cases
+
+                        # if we returned to the starting vertex and path forms a closed ring -> done
+                        if cur == start_edge[0] and len(path) > 2:
+                            # convert path of directed edges to list of (face,i) using boundary_oriented
+                            loop_face_idx = [boundary_oriented[e] for e in path]
+                            loops.append(loop_face_idx)
+                            break
+
+                        # select outgoing candidates from 'cur' that haven't been used (directed)
+                        candidates = [v for v in outgoing[cur] if (cur, v) not in used]
+
+                        if not candidates:
+                            # no unused outgoing edges: maybe there is an incoming edge continuing the loop
+                            # look for any neighbor (either outgoing or incoming) that forms an unused directed edge
+                            # incoming neighbors are vertices 'x' for which (x, cur) exists in boundary_oriented
+                            incoming = [x for (x, y) in boundary_oriented.keys() if y == cur and (x, cur) not in used]
+                            candidates = incoming
+
+                        if not candidates:
+                            # dead end: abandon this path
+                            break
+
+                        # if multiple candidates pick the one with smallest left-turn angle (prefer continuity)
+                        best = None
+                        best_angle = None
+                        for cand in candidates:
+                            try:
+                                ang = angle_between(cur_prev, cur, cand)
+                            except Exception:
+                                ang = 0.0
+                            # We prefer angles that keep us moving forward around the loop:
+                            # choose the candidate with the smallest absolute angle (continuation)
+                            if best is None or abs(ang) < best_angle:
+                                best = cand
+                                best_angle = abs(ang)
+
+                        next_edge = (cur, best)
+                        # if next_edge isn't an oriented boundary edge (maybe it's an incoming variant), try the other direction
+                        if next_edge not in boundary_oriented:
+                            # try to find an oriented key that exists (best might be incoming)
+                            possible = None
+                            if (best, cur) in boundary_oriented and (best, cur) not in used:
+                                # reverse direction available (we'll follow that directed edge)
+                                possible = (best, cur)
+                            if possible is None:
+                                break
+                            next_edge = possible
+
+                        # mark and append
+                        used.add(next_edge)
+                        path.append(next_edge)
+                        cur_prev, cur = next_edge[0], next_edge[1]
+
+                if len(loops) < 2:
+                    # no holes in this island
+                    continue
+
+                # compute signed areas to distinguish outer vs holes
+                def signed_area(coords):
+                    area = 0.0
+                    n = len(coords)
+                    for i in range(n - 1):
+                        area += coords[i].x * coords[i+1].y - coords[i+1].x * coords[i].y
+                    return area * 0.5
+
+                signed_areas = []
+                for loop in loops:
+                    coords = []
+                    for face, i in loop:
+                        coords.append(face.loops[i][uv_layer].uv.copy())
+                    # close loop
+                    if coords and coords[0] != coords[-1]:
+                        coords.append(coords[0])
+                    if len(coords) >= 3:
+                        signed_areas.append(signed_area(coords))
+                    else:
+                        signed_areas.append(0.0)
+
+                abs_areas = [abs(a) for a in signed_areas]
+                outer_idx = max(range(len(abs_areas)), key=lambda i: abs_areas[i])
+                outer_sign = math.copysign(1, signed_areas[outer_idx])
+
+                # select edges that are opposite winding to the outer loop (holes)
+                for idx, area in enumerate(signed_areas):
+                    if idx == outer_idx:
+                        continue
+                    if math.copysign(1, area) != outer_sign:
+                        for face, i in loops[idx]:
+                            face.loops[i][uv_layer].select_edge = True
+                            total_selected += 1
+
+            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+
+        if total_selected == 0:
+            self.report({'INFO'}, "No internal boundaries selected")
+        else:
+            self.report({'INFO'}, f"Selected {total_selected} internal boundary edges")
+        return {'FINISHED'}
+
 
 # ------------------------------ Grid Helper Operators ------------------------------
 
@@ -871,8 +1432,8 @@ class BB_UVs_ApplyGrid(Operator):
             self.report({'WARNING'}, "Invalid grid image path. Click 'Browse File' first.")
             return {'CANCELLED'}
         grid_mat = _ensure_grid_material(img, mat_name="BB_UVs_GridMat")
-        mode = getattr(context.view_layer.objects.active, "mode", "OBJECT")
-        if mode == 'EDIT':
+        mode = context.mode
+        if mode == 'EDIT_MESH':
             targets = [o for o in context.objects_in_mode if _object_is_uv_mesh(o)]
         else:
             targets = [o for o in context.selected_objects if _object_is_uv_mesh(o)]
@@ -895,8 +1456,8 @@ class BB_UVs_RevertMaterials(Operator):
     bl_label = "Revert"
     bl_options = {'REGISTER', 'UNDO'}
     def execute(self, context):
-        mode = getattr(context.view_layer.objects.active, "mode", "OBJECT")
-        if mode == 'EDIT':
+        mode = context.mode
+        if mode == 'EDIT_MESH':
             targets = [o for o in context.objects_in_mode if _object_is_uv_mesh(o)]
         else:
             targets = [o for o in context.selected_objects if _object_is_uv_mesh(o)]
@@ -910,6 +1471,48 @@ class BB_UVs_RevertMaterials(Operator):
             self.report({'WARNING'}, "No backups found on selected objects."); return {'CANCELLED'}
         self.report({'INFO'}, f"Reverted {restored} object(s)."); return {'FINISHED'}
 
+class BB_UVs_SelectZeroArea(Operator):
+    bl_idname = "bb_uvs.select_zero_area"
+    bl_label = "Select 0 Area"
+    bl_description = "Select UV faces with zero or near-zero surface area in UV space"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'EDIT_MESH' and (obj := context.active_object) and obj.type == 'MESH'
+
+    def execute(self, context):
+        sync = context.tool_settings.use_uv_select_sync
+        if sync:
+            self.report({'WARNING'}, "Disable UV Sync for UV area selection")
+            return {'CANCELLED'}
+
+        bpy.ops.uv.select_all(action='DESELECT')
+
+        total = 0
+        for obj in context.objects_in_mode:
+            if not _object_is_uv_mesh(obj):
+                continue
+            bm = bmesh.from_edit_mesh(obj.data)
+            uv_layer = bm.loops.layers.uv.active
+            if not uv_layer:
+                continue
+
+            for face in bm.faces:
+                area = _poly_uv_area(face, uv_layer)
+                if area <= 1e-8:  # near-zero UV area
+                    for loop in face.loops:
+                        loop[uv_layer].select = True
+                        loop[uv_layer].select_edge = True
+                    total += 1
+
+            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+
+        if total == 0:
+            self.report({'INFO'}, "No zero-area UV faces found")
+        else:
+            self.report({'INFO'}, f"Selected {total} zero-area UV face(s)")
+        return {'FINISHED'}
 # ------------------------------ UI Helper ------------------------------
 
 class BB_UVs_SetUI(Operator):
@@ -936,10 +1539,21 @@ class BB_UVs_SetUI(Operator):
 # ------------------------------ UI Panels ------------------------------
 
 def draw_bb_uvs_panel(self, context):
+
     S = context.scene
     layout = self.layout
 
-    # Grid helper (BEFORE Set UI)
+    layout.separator()
+    layout.label(text="Set UI")
+    layout.operator("bb_uvs.set_ui", text="Set UI")
+    
+    layout.separator()
+    layout.label(text="Select Similar")
+    row = layout.row(align=True)
+    row.operator("bb_uvs.select_similar_topology", text="Topology")
+    row.operator("bb_uvs.select_similar_topology_scale", text="Topology + Scale")
+    
+    
     layout.label(text="Grid Helper")
     row = layout.row(align=True)
     row.operator("bb_uvs.choose_grid_image", text="Browse File", icon='FILEBROWSER')
@@ -956,14 +1570,13 @@ def draw_bb_uvs_panel(self, context):
     op = row.operator("bb_uvs.set_grid_scale", text="6x"); op.scale = '6'
 
     layout.separator()
-    layout.label(text="Set UI")
-    layout.operator("bb_uvs.set_ui", text="Set UI")
-
-    layout.separator()
     layout.label(text="Pack")
     row = layout.row(align=True)
+    row.prop(S, "bb_keep_td", text="Keep TD")
+    row.prop(S, "bb_pack_rotate", text="Rotation")  # ← Add this line
+    row = layout.row(align=True)
     row.operator("bb_uvs.normalize_pack_individually", text="Pack Individually")
-    row.operator("bb_uvs.normalize_pack", text="Pack Together")
+    row.operator("bb_uvs.normalize_pack", text="Pack Together")    
 
     layout.separator()
     row = layout.row(align=True)
@@ -974,25 +1587,48 @@ def draw_bb_uvs_panel(self, context):
 
     layout.separator()
     layout.label(text="Move")
-    active = context.view_layer.objects.active
-    mode = getattr(active, "mode", "OBJECT") if active else "OBJECT"
-    row = layout.row(align=True); row.label(text="Context:")
-    if mode == 'EDIT':
-        left = row.row(align=True)
-        op = left.operator("bb_uvs.set_move_context", text="Selected", icon='RESTRICT_SELECT_OFF', depress=S.bb_move_selected_only)
-        op.set_selected = True
-        right = row.row(align=True)
-        op = right.operator("bb_uvs.set_move_context", text="Highlighted", icon='RADIOBUT_ON', depress=not S.bb_move_selected_only)
-        op.set_selected = False
-    else:
-        # Object Mode: "Selected" = all selected objects; "Highlighted" = active only
+
+    # 🔹 New interactive drag button (visible only in UV editor, disabled in Edit Mode)
+    if context.area.type == 'IMAGE_EDITOR':
+        row = layout.row(align=True)
+        row.enabled = (context.mode == 'OBJECT')
+        row.operator("bb_uvs.move_uvs_interactive",
+                     text="Move UVs (Drag)",
+                     icon='ARROW_LEFTRIGHT')
+
+    # --- Existing move context and arrows ---
+    active = getattr(context, "active_object", None)
+    mode = context.mode
+
+    layout.separator()
+    row = layout.row(align=True)
+    row.label(text="Context:")
+    if mode == 'EDIT_MESH':
         left = row.row(align=True)
         op = left.operator("bb_uvs.set_move_context", text="Selected", icon='RESTRICT_SELECT_OFF', depress=not S.bb_move_selected_only)
+        op.set_selected = False  # Selected mode = move all objects
+
+        right = row.row(align=True)  
+        op = right.operator("bb_uvs.set_move_context", text="Highlighted", icon='RADIOBUT_ON', depress=S.bb_move_selected_only)
+        op.set_selected = True 
+    else:
+        # Object Mode: choose one context: Selected / Highlighted / Collection
+        row = layout.row(align=True)
+
+        # Selected (move all selected objects)
+        op = row.operator("bb_uvs.set_move_context", text="Selected", icon='RESTRICT_SELECT_OFF',
+                          depress=(not S.bb_move_selected_only and not S.bb_move_collection))
         op.set_selected = False  # move all selected objects
 
-        right = row.row(align=True)
-        op = right.operator("bb_uvs.set_move_context", text="Highlighted", icon='RADIOBUT_ON', depress=S.bb_move_selected_only)
+        # Highlighted (move only the active)
+        op = row.operator("bb_uvs.set_move_context", text="Highlighted", icon='RADIOBUT_ON',
+                          depress=(S.bb_move_selected_only and not S.bb_move_collection))
         op.set_selected = True   # move only the active (highlighted) object
+
+        # Collection (toggle) — now an operator so it behaves like the other buttons
+        op = row.operator("bb_uvs.set_move_collection", text="Collection", icon='OUTLINER_COLLECTION',
+                          depress=S.bb_move_collection)
+
 
     row = layout.row(align=True)
     col = row.column(align=True); col.operator_context = 'EXEC_DEFAULT'
@@ -1017,9 +1653,18 @@ def draw_bb_uvs_panel(self, context):
     op = r.operator("bb_uvs.rotate_uvs", text="90° CW",  icon='LOOP_FORWARDS'); op.direction = 'CW'
 
     layout.separator()
-    layout.label(text="Flip")
-    f = layout.row(); f.scale_y = 1.1
-    op = f.operator("bb_uvs.flip_uvs", text="Flip Horizontal", icon='ARROW_LEFTRIGHT'); op.axis = 'H'
+    layout.label(text="Check and fix")
+    if context.mode == 'EDIT_MESH':  # ← Only show selection tools in Edit Mode
+        f = layout.row(); f.scale_y = 1.1
+        f = layout.row(); f.scale_y = 1.1
+        f.operator("bb_uvs.select_cross_udims", text="", icon='SNAP_GRID')
+        f.operator("bb_uvs.select_boundaries", text="", icon='CLIPUV_DEHLT')
+        f.operator("uv.select_overlap", text="", icon='SELECT_INTERSECT')
+        f.operator("bb_uvs.select_zero_area", text="", icon='CANCEL')
+        f = layout.row(); f.scale_y = 1.1
+        f.operator("bb_uvs.select_flipped", text="Select Flipped", icon='UV_SYNC_SELECT')
+        op = f.operator("bb_uvs.flip_uvs", text="Flip Horizontal", icon='ARROW_LEFTRIGHT')
+        op.axis = 'H'
 
 class UV_PT_BB_UVs(Panel):
     bl_label = "BB UVs"
@@ -1065,6 +1710,20 @@ def register():
         name="Grid Image", default="", subtype='FILE_PATH',
         description="Path to the grid/UV texture"
     )
+    bpy.types.Scene.bb_keep_td = BoolProperty(
+        name="Keep TD", default=False,
+        description="Keep current texel density (skip normalization and scaling during pack)"
+    )
+    bpy.types.Scene.bb_move_collection = BoolProperty(
+        name="Collection",
+        default=False,
+        description="When ON, move all UVs from objects in the active object's collection"
+    ) 
+    bpy.types.Scene.bb_pack_rotate = BoolProperty(
+        name="Rotation", 
+        default=True,
+        description="Allow rotation during packing for better efficiency"
+    )   
 
     # Register operators/panels
     for cls in (
@@ -1072,8 +1731,15 @@ def register():
         BB_UVs_MoveUVs, BB_UVs_RotateUVs, BB_UVs_NormalizePack,
         BB_UVs_SetUI, BB_UVs_FlipUVs, BB_UVs_SetMoveContext, BB_UVs_ToggleMoveHighlight,
         BB_UVs_ChooseGridImage, BB_UVs_ApplyGrid, BB_UVs_RevertMaterials,
-        BB_UVs_SetGridScale,
+        BB_UVs_SetGridScale, BB_UVs_MoveUVsInteractive,
         UV_PT_BB_UVs, BB_UVs_PackIndividually, VIEW3D_PT_BB_UVs,
+        BB_UVs_SetMoveCollection,
+        BB_UVs_SelectSimilarTopology,
+        BB_UVs_SelectSimilarTopologyScale,
+        BB_UVs_SelectFlipped,
+        BB_UVs_SelectCrossUDIMs,
+        BB_UVs_SelectBoundaries,
+        BB_UVs_SelectZeroArea,
     ):
         try:
             bpy.utils.register_class(cls)
@@ -1085,8 +1751,14 @@ def register():
             bpy.utils.register_class(cls)
 
 def unregister():
+    if hasattr(bpy.types.Scene, "bb_keep_td"):
+        try:
+            delattr(bpy.types.Scene, "bb_keep_td")
+        except Exception:
+            pass    
     # Remove Scene-level properties if they exist
-    for prop in ("bb_density", "bb_move_amount", "bb_move_selected_only", "bb_grid_image_path"):
+    for prop in ("bb_density", "bb_move_amount", "bb_move_selected_only", 
+             "bb_grid_image_path", "bb_move_collection", "bb_pack_rotate",):
         if hasattr(bpy.types.Scene, prop):
             try:
                 delattr(bpy.types.Scene, prop)
@@ -1099,8 +1771,15 @@ def unregister():
         BB_UVs_MoveUVs, BB_UVs_RotateUVs, BB_UVs_NormalizePack,
         BB_UVs_SetUI, BB_UVs_FlipUVs, BB_UVs_SetMoveContext, BB_UVs_ToggleMoveHighlight,
         BB_UVs_ChooseGridImage, BB_UVs_ApplyGrid, BB_UVs_RevertMaterials,
-        BB_UVs_SetGridScale,
+        BB_UVs_SetGridScale, BB_UVs_MoveUVsInteractive,
         UV_PT_BB_UVs, BB_UVs_PackIndividually, VIEW3D_PT_BB_UVs,
+        BB_UVs_SetMoveCollection,
+        BB_UVs_SelectSimilarTopology,
+        BB_UVs_SelectSimilarTopologyScale,
+        BB_UVs_SelectFlipped,
+        BB_UVs_SelectCrossUDIMs,
+        BB_UVs_SelectBoundaries,
+        BB_UVs_SelectZeroArea,
     )):
         try:
             bpy.utils.unregister_class(cls)
