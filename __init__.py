@@ -662,6 +662,8 @@ class BB_UVs_SelectSimilarTopology(Operator):
             obj.select_set(True)
         return {'FINISHED'}
 
+# ------------------------------ Select Cross UDIMs (Optimized) ------------------------------
+
 class BB_UVs_SelectCrossUDIMs(Operator):
     bl_idname = "bb_uvs.select_cross_udims"
     bl_label = "Cross UDIMs"
@@ -691,30 +693,43 @@ class BB_UVs_SelectCrossUDIMs(Operator):
             if not uv_layer:
                 continue
 
+            # Pre-collect all islands first (much faster)
+            islands = _collect_uv_islands(bm, uv_layer, only_selected=False)
+            
             local_counter = 0
-            for f in bm.faces:
-                if sync and f.hide:
+            processed_islands = set()
+            
+            for island in islands:
+                if id(island) in processed_islands:
                     continue
-
-                # Collect all UDIM tile coordinates (floor of UVs)
-                tiles = set()
-                for loop in f.loops:
-                    uv = loop[uv_layer].uv
-                    tile_u = math.floor(uv.x)
-                    tile_v = math.floor(uv.y)
-                    tiles.add((tile_u, tile_v))
-                    if len(tiles) > 1:
-                        # Early exit: already crosses UDIMs
+                    
+                # Check if any face in this island crosses UDIMs
+                island_crosses_udim = False
+                for f in island:
+                    tiles = set()
+                    for loop in f.loops:
+                        uv = loop[uv_layer].uv
+                        tile_u = math.floor(uv.x)
+                        tile_v = math.floor(uv.y)
+                        tiles.add((tile_u, tile_v))
+                        if len(tiles) > 1:
+                            island_crosses_udim = True
+                            break
+                    if island_crosses_udim:
                         break
 
-                if len(tiles) > 1:
-                    if sync:
-                        f.select = True
-                    else:
-                        for loop in f.loops:
-                            loop[uv_layer].select = True
-                            loop[uv_layer].select_edge = True
-                    local_counter += 1
+                # If island crosses UDIMs, select all faces in it
+                if island_crosses_udim:
+                    for f in island:
+                        if sync:
+                            f.select = True
+                        else:
+                            for loop in f.loops:
+                                loop[uv_layer].select = True
+                                loop[uv_layer].select_edge = True
+                        local_counter += 1
+                    
+                    processed_islands.add(id(island))
 
             total_counter += local_counter
             bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
@@ -1165,6 +1180,8 @@ class BB_UVs_SelectFlipped(Operator):
             
         return {'FINISHED'}
 
+# ------------------------------ Select Boundaries (Fixed) ------------------------------
+
 class BB_UVs_SelectBoundaries(bpy.types.Operator):
     bl_idname = "bb_uvs.select_boundaries"
     bl_label = "Select Boundaries"
@@ -1182,8 +1199,8 @@ class BB_UVs_SelectBoundaries(bpy.types.Operator):
         total_selected = 0
         sync = context.tool_settings.use_uv_select_sync
         if sync:
-            self.report({'WARNING'}, "Disable UV Sync for UV boundary selection")
-            return {'CANCELLED'}
+            # Auto-disable UV sync and continue instead of showing error
+            context.tool_settings.use_uv_select_sync = False
 
         bpy.ops.uv.select_all(action='DESELECT')
 
@@ -1374,8 +1391,11 @@ class BB_UVs_SelectBoundaries(bpy.types.Operator):
             self.report({'INFO'}, "No internal boundaries selected")
         else:
             self.report({'INFO'}, f"Selected {total_selected} internal boundary edges")
+            
+        # Select all polys in viewport after operation
+        bpy.ops.mesh.select_all(action='SELECT')
+            
         return {'FINISHED'}
-
 
 # ------------------------------ Grid Helper Operators ------------------------------
 
@@ -1454,8 +1474,8 @@ class BB_UVs_SelectZeroArea(Operator):
     def execute(self, context):
         sync = context.tool_settings.use_uv_select_sync
         if sync:
-            self.report({'WARNING'}, "Disable UV Sync for UV area selection")
-            return {'CANCELLED'}
+            # Auto-disable UV sync and continue instead of showing error
+            context.tool_settings.use_uv_select_sync = False
 
         bpy.ops.uv.select_all(action='DESELECT')
 
@@ -1482,8 +1502,14 @@ class BB_UVs_SelectZeroArea(Operator):
             self.report({'INFO'}, "No zero-area UV faces found")
         else:
             self.report({'INFO'}, f"Selected {total} zero-area UV face(s)")
+            
+        # Auto-execute unfold after selection
+        if total > 0:
+            bpy.ops.uv.unwrap(method='ANGLE_BASED', margin=0.001)
+            
         return {'FINISHED'}
 # ------------------------------ UI Helper ------------------------------
+
 
 class BB_UVs_SetUI(Operator):
     bl_idname = "bb_uvs.set_ui"
@@ -1496,14 +1522,44 @@ class BB_UVs_SetUI(Operator):
                 image_space = area.spaces.active; break
         if image_space is None:
             self.report({'WARNING'}, "No UV/Image Editor found"); return {'CANCELLED'}
-        image_space.uv_editor.edge_display_type = 'BLACK'
-        image_space.uv_editor.tile_grid_shape = (10, 10)
-        image_space.overlay.show_grid_background = True
+        
+        # Use safe attribute setting for edge display type
+        if hasattr(image_space.uv_editor, 'edge_display_type'):
+            try:
+                # Try available edge display types
+                available_types = ['BLACK', 'WHITE', 'DASH', 'SOLID']
+                for display_type in available_types:
+                    try:
+                        image_space.uv_editor.edge_display_type = display_type
+                        break
+                    except TypeError:
+                        continue
+            except Exception:
+                pass
+        
+        # Set other UI properties safely
+        if hasattr(image_space.uv_editor, 'tile_grid_shape'):
+            try:
+                image_space.uv_editor.tile_grid_shape = (10, 10)
+            except Exception:
+                pass
+        if hasattr(image_space.overlay, 'show_grid_background'):
+            try:
+                image_space.overlay.show_grid_background = True
+            except Exception:
+                pass
+            
         ts = context.tool_settings
-        try: ts.mesh_select_mode = (False, True, False)
-        except Exception: pass
-        try: ts.uv_select_mode = 'EDGE'
-        except Exception: pass
+        try: 
+            ts.mesh_select_mode = (False, True, False)
+        except Exception: 
+            pass
+        try: 
+            if hasattr(ts, 'uv_select_mode'):
+                ts.uv_select_mode = 'EDGE'
+        except Exception: 
+            pass
+            
         self.report({'INFO'}, "UI set: UV grid on, selection set to Edge."); return {'FINISHED'}
 
 # ------------------------------ UI Panels ------------------------------
