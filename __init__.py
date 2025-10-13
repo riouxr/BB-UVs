@@ -599,39 +599,32 @@ class BB_UVs_MoveUVs(Operator):
         elif self.direction == 'DOWN_LEFT': dx, dy = -amt, -amt
         elif self.direction == 'DOWN_RIGHT': dx, dy = amt, -amt
 
-        targets = []
+        if context.mode == 'EDIT_MESH':
+            S.bb_move_collection = False
+            if S.bb_move_selected_only:  # Highlighted: move all UVs of active object
+                if _object_is_uv_mesh(active):
+                    _move_uvs_edit(active, dx, dy, only_selected=False)
+            else:  # Selected: move selected UVs of all objects in edit mode
+                targets = [o for o in context.objects_in_mode if _object_is_uv_mesh(o)]
+                for o in targets:
+                    _move_uvs_edit(o, dx, dy, only_selected=True)
+        else:  # Object mode
+            targets = []
+            if S.bb_move_selected_only:
+                if _object_is_uv_mesh(active):
+                    targets = [active]
+            elif S.bb_move_collection:
+                if active and active.users_collection:
+                    active_coll = active.users_collection[0]
+                    targets = [o for o in active_coll.objects if _object_is_uv_mesh(o)]
+            else:
+                targets = [o for o in context.selected_objects if _object_is_uv_mesh(o)]
+            for o in targets:
+                _move_uvs_object(o, dx, dy)
 
-        # 🟢 Match logic from working Move UVs operator
-        if S.bb_move_selected_only:
-            if _object_is_uv_mesh(active):
-                targets = [active]
-
-        elif S.bb_move_collection:
-            # Only move UVs of objects in the same collection as the active object
-            if active and active.users_collection:
-                active_coll = active.users_collection[0]  # same logic as working button
-                targets = [
-                    o for o in active_coll.objects
-                    if _object_is_uv_mesh(o)
-                ]
-
-        else:
-            # Default: all selected mesh objects
-            targets = [
-                o for o in context.selected_objects
-                if _object_is_uv_mesh(o)
-            ]
-
-        # Apply the move
-        for o in targets:
-            _move_uvs_object(o, dx, dy)
-
-        if targets:
-            context.view_layer.update()
-
+        context.view_layer.update()
         return {'FINISHED'}
-
-
+    
 class BB_UVs_SelectSimilarTopology(Operator):
     bl_idname = "bb_uvs.select_similar_topology"
     bl_label = "Sim"
@@ -1182,6 +1175,9 @@ class BB_UVs_SelectFlipped(Operator):
 
 # ------------------------------ Select Boundaries (Fixed) ------------------------------
 
+# ------------------------------ Select Boundaries (Fixed) ------------------------------
+# ------------------------------ Select Boundaries (Fixed) ------------------------------
+
 class BB_UVs_SelectBoundaries(bpy.types.Operator):
     bl_idname = "bb_uvs.select_boundaries"
     bl_label = "Select Boundaries"
@@ -1382,21 +1378,31 @@ class BB_UVs_SelectBoundaries(bpy.types.Operator):
                         continue
                     if math.copysign(1, area) != outer_sign:
                         for face, i in loops[idx]:
+                            # Select the edge
                             face.loops[i][uv_layer].select_edge = True
+                            
+                            # Also select the two UV vertices for better visibility
+                            face.loops[i][uv_layer].select = True
+                            next_i = (i + 1) % len(face.loops)
+                            face.loops[next_i][uv_layer].select = True
+                            
                             total_selected += 1
 
             bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+
+        # Force UV select mode to EDGE for better visibility of selected edges
+        context.tool_settings.uv_select_mode = 'EDGE'
 
         if total_selected == 0:
             self.report({'INFO'}, "No internal boundaries selected")
         else:
             self.report({'INFO'}, f"Selected {total_selected} internal boundary edges")
             
-        # Select all polys in viewport after operation
-        bpy.ops.mesh.select_all(action='SELECT')
+        # Auto-execute unfold after selection
+        if total_selected > 0:
+            bpy.ops.uv.unwrap(method='ANGLE_BASED', margin=0.001)
             
         return {'FINISHED'}
-
 # ------------------------------ Grid Helper Operators ------------------------------
 
 class BB_UVs_ChooseGridImage(Operator):
@@ -1475,7 +1481,7 @@ class BB_UVs_SelectZeroArea(Operator):
         sync = context.tool_settings.use_uv_select_sync
         if sync:
             # Auto-disable UV sync and continue instead of showing error
-            context.tool_settings.use_uv_select_sync = False
+            bpy.ops.mesh.select_all(action='SELECT')
 
         bpy.ops.uv.select_all(action='DESELECT')
 
