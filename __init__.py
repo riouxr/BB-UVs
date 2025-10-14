@@ -775,7 +775,8 @@ class BB_UVs_MoveUVsInteractive(bpy.types.Operator):
             delta_x = event.mouse_x - self._last_mouse[0]
             delta_y = event.mouse_y - self._last_mouse[1]
             self._last_mouse = (event.mouse_x, event.mouse_y)
-            sensitivity = 0.02  # Adjust as needed (pixels to UDIM fraction)
+            sensitivity = 0.005
+            # Adjust as needed (pixels to UDIM fraction)
             dx = delta_x * sensitivity
             dy = delta_y * sensitivity
             self._total_dx += dx
