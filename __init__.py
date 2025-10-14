@@ -772,15 +772,28 @@ class BB_UVs_MoveUVsInteractive(bpy.types.Operator):
         if event.type == 'MOUSEMOVE':
             if not self._dragging:
                 return {'RUNNING_MODAL'}
+
             delta_x = event.mouse_x - self._last_mouse[0]
             delta_y = event.mouse_y - self._last_mouse[1]
             self._last_mouse = (event.mouse_x, event.mouse_y)
-            sensitivity = 0.005
-            # Adjust as needed (pixels to UDIM fraction)
-            dx = delta_x * sensitivity
-            dy = delta_y * sensitivity
+
+            # --- New zoom-aware sensitivity ---
+            region = context.region
+            v2d = region.view2d if hasattr(region, "view2d") else None
+            if v2d:
+                x1, y1 = v2d.region_to_view(0, 0)
+                x2, y2 = v2d.region_to_view(100, 0)
+                uv_per_pixel = abs(x2 - x1) / 100.0
+            else:
+                uv_per_pixel = 0.005  # fallback
+
+            dx = delta_x * uv_per_pixel
+            dy = delta_y * uv_per_pixel
+            # -----------------------------------
+
             self._total_dx += dx
             self._total_dy += dy
+
 
             # Apply incremental move
             if S.bb_move_collection and active:
