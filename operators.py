@@ -1151,6 +1151,14 @@ class BB_UVs_ProjectorAddPlane(bpy.types.Operator):
         if not _prepare_targets(ctx):
             self.report({'ERROR'}, "Select meshes first")
             return {'CANCELLED'}
+        
+        # --- remove existing projector first ---
+        old = ctx.scene.uvproj_projector
+        if old and old.name in bpy.data.objects:
+            bpy.data.objects.remove(old, do_unlink=True)
+            ctx.scene.uvproj_projector = None
+            ctx.scene["uvproj_last_matrix"] = None
+        # ---------------------------------------
 
         bpy.ops.mesh.primitive_plane_add(size=2)
         proj = ctx.active_object
@@ -1172,6 +1180,14 @@ class BB_UVs_ProjectorAddCylinder(bpy.types.Operator):
             self.report({'ERROR'}, "Select meshes first")
             return {'CANCELLED'}
 
+        # --- remove existing projector first ---
+        old = ctx.scene.uvproj_projector
+        if old and old.name in bpy.data.objects:
+            bpy.data.objects.remove(old, do_unlink=True)
+            ctx.scene.uvproj_projector = None
+            ctx.scene["uvproj_last_matrix"] = None
+        # ---------------------------------------
+
         bpy.ops.mesh.primitive_cylinder_add(radius=1, depth=2)
         proj = ctx.active_object
         proj["uvproj_mode"] = "CYL"
@@ -1191,6 +1207,14 @@ class BB_UVs_ProjectorAddCube(bpy.types.Operator):
         if not _prepare_targets(ctx):
             self.report({'ERROR'}, "Select meshes first")
             return {'CANCELLED'}
+
+        # --- remove existing projector first ---
+        old = ctx.scene.uvproj_projector
+        if old and old.name in bpy.data.objects:
+            bpy.data.objects.remove(old, do_unlink=True)
+            ctx.scene.uvproj_projector = None
+            ctx.scene["uvproj_last_matrix"] = None
+        # ---------------------------------------
 
         bpy.ops.mesh.primitive_cube_add(size=2)
         proj = ctx.active_object
