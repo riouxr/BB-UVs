@@ -1173,10 +1173,16 @@ class BB_UVs_ProjectorAddPlane(bpy.types.Operator):
         proj.show_in_front = True
         H.fit_projector(ctx, proj, "PLANE")
 
-
         ctx.scene.uvproj_projector = proj
-        bpy.context.view_layer.update()
+        ctx.scene.uvproj_running = True
+
+        # 🔹 reset cached matrix so first move updates UVs
+        if "uvproj_last_matrix" in ctx.scene:
+            del ctx.scene["uvproj_last_matrix"]
+
+        H.projector_update(ctx.scene)
         return {'FINISHED'}
+
 
 class BB_UVs_ProjectorAddCylinder(bpy.types.Operator):
     bl_idname = "bb_uvs.projector_add_cylinder"
@@ -1205,9 +1211,14 @@ class BB_UVs_ProjectorAddCylinder(bpy.types.Operator):
 
         ctx.scene.uvproj_projector = proj
         ctx.scene.uvproj_running = True
+
+        # 🔹 reset cached matrix so first move updates UVs
+        if "uvproj_last_matrix" in ctx.scene:
+            del ctx.scene["uvproj_last_matrix"]
+
         H.projector_update(ctx.scene)
-        bpy.context.view_layer.update()
         return {'FINISHED'}
+
 
 class BB_UVs_ProjectorAddSphere(bpy.types.Operator):
     bl_idname = "bb_uvs.projector_add_sphere"
@@ -1235,7 +1246,13 @@ class BB_UVs_ProjectorAddSphere(bpy.types.Operator):
 
 
         ctx.scene.uvproj_projector = proj
-        bpy.context.view_layer.update()
+        ctx.scene.uvproj_running = True
+
+        # 🔹 reset cached matrix so first move updates UVs
+        if "uvproj_last_matrix" in ctx.scene:
+            del ctx.scene["uvproj_last_matrix"]
+
+        H.projector_update(ctx.scene)
         return {'FINISHED'}
 
 class BB_UVs_ProjectorAddCube(bpy.types.Operator):
@@ -1263,8 +1280,15 @@ class BB_UVs_ProjectorAddCube(bpy.types.Operator):
         H.fit_projector(ctx, proj, "CUBE")
 
         ctx.scene.uvproj_projector = proj
-        bpy.context.view_layer.update()
+        ctx.scene.uvproj_running = True
+
+        # 🔹 reset cached matrix so first move updates UVs
+        if "uvproj_last_matrix" in ctx.scene:
+            del ctx.scene["uvproj_last_matrix"]
+
+        H.projector_update(ctx.scene)
         return {'FINISHED'}
+
 
 class BB_UVs_ProjectorApply(bpy.types.Operator):
     bl_idname = "bb_uvs.projector_apply"

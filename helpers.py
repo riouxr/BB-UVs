@@ -694,10 +694,13 @@ def projector_update(scene=None, depsgraph=None):
 
     current_matrix = [list(row) for row in proj.matrix_world]
     last_matrix = scene.get("uvproj_last_matrix")
-    if last_matrix == current_matrix:
+
+    # Only skip if we actually HAVE a previous value
+    if last_matrix is not None and last_matrix == current_matrix:
         return
 
     scene["uvproj_last_matrix"] = current_matrix
+
     mode = proj.get("uvproj_mode", "PLANE")
 
     from .helpers import get_targets, ensure_uv, apply_planar, apply_cyl, apply_cube, apply_sphere
