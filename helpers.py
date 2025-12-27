@@ -3,10 +3,114 @@ import bmesh
 import math
 import os
 import json
-from math import isclose, atan2, pi
+from math import isclose, atan2, pi, asin
+from mathutils import Vector
+from bpy.app.handlers import persistent
 
 # ---------- General helpers ----------
+def compute_selection_bbox(ctx):
+    # Use current projector targets (uvproj_target) instead of current selection,
+    # so behavior stays stable even if user changes selection later.
+    obs = get_targets()
+    if not obs:
+        return None, None
 
+    pts = []
+    for o in obs:
+        m = o.matrix_world
+        for v in o.bound_box:
+            pts.append(m @ Vector(v))
+
+    mn = Vector((min(p.x for p in pts),
+                 min(p.y for p in pts),
+                 min(p.z for p in pts)))
+
+    mx = Vector((max(p.x for p in pts),
+                 max(p.y for p in pts),
+                 max(p.z for p in pts)))
+
+    return mn, mx
+
+
+def apply_axis_rotation(obj, axis):
+    obj.rotation_euler = (0.0, 0.0, 0.0)
+
+    if axis == 'Z':
+        return
+    elif axis == 'X':
+        obj.rotation_euler = (0.0, -math.pi/2.0, 0.0)
+    elif axis == 'Y':
+        obj.rotation_euler = (math.pi/2.0, 0.0, 0.0)
+
+
+def fit_projector(ctx, proj, mode):
+    mn, mx = compute_selection_bbox(ctx)
+    if not mn:
+        return
+
+    dx = max(mx.x - mn.x, 1e-6)
+    dy = max(mx.y - mn.y, 1e-6)
+    dz = max(mx.z - mn.z, 1e-6)
+
+    center = (mn + mx) * 0.5
+    proj.location = center
+
+    S = ctx.scene
+    keep = getattr(S, "uvproj_keep_ratio", True)
+    axis = getattr(S, "uvproj_axis", "Z")
+
+    proj.scale = (1, 1, 1)
+    proj.rotation_euler = (0, 0, 0)
+
+    base = 2.0   # Blender primitive = 2 units across
+
+    if mode == "PLANE":
+        if axis == 'Z':
+            sx, sy = dx, dy
+        elif axis == 'X':
+            sx, sy = dy, dz
+        else:
+            sx, sy = dx, dz
+
+        if keep:
+            L = max(sx, sy)
+            sx = sy = L
+
+        proj.scale = (sx/base, sy/base, 1.0)
+
+    elif mode == "CYL":
+        if axis == 'Z':
+            h = dz;  r1, r2 = dx, dy
+        elif axis == 'X':
+            h = dx;  r1, r2 = dy, dz
+        else:
+            h = dy;  r1, r2 = dx, dz
+
+        diameter = max(r1, r2)
+
+        if keep:
+            L = max(dx, dy, dz)
+            diameter = L
+            h = L
+
+        proj.scale = (diameter/base, diameter/base, h/base)
+
+    elif mode == "SPHERE":
+        if keep:
+            L = max(dx, dy, dz)
+            proj.scale = (L/base, L/base, L/base)
+        else:
+            proj.scale = (dx/base, dy/base, dz/base)
+
+    elif mode == "CUBE":
+        if keep:
+            L = max(dx, dy, dz)
+            proj.scale = (L/base, L/base, L/base)
+        else:
+            proj.scale = (dx/base, dy/base, dz/base)
+
+    apply_axis_rotation(proj, axis)
+    
 def _S(context):
     """Return scene-level settings (direct scene props)."""
     return context.scene
@@ -400,11 +504,36 @@ def ensure_uv(obj):
     if not obj.data.uv_layers:
         obj.data.uv_layers.new(name="UVMap")
 
+
 def projector_local(obj, proj, co):
     return (proj.matrix_world.inverted() @ obj.matrix_world) @ co
 
+
 def get_targets():
     return [o for o in bpy.data.objects if o.get("uvproj_target")]
+
+
+def _unwrap_loop_sequence(values, threshold=0.5):
+    """Make a scalar UV sequence continuous by adding integer offsets.
+    This lets UVs cross 0–1 borders cleanly (UDIM wrapping)."""
+    if not values:
+        return values
+    out = [values[0]]
+    offset = 0.0
+    prev = values[0]
+    for u in values[1:]:
+        base = u + offset
+        # Shift by whole tiles until neighbor difference is small
+        while base - prev > threshold:
+            offset -= 1.0
+            base = u + offset
+        while prev - base > threshold:
+            offset += 1.0
+            base = u + offset
+        out.append(base)
+        prev = base
+    return out
+
 
 # ---------- Projector projections ----------
 
@@ -416,11 +545,12 @@ def apply_planar(obj, proj):
     for f in bm.faces:
         for l in f.loops:
             p = projector_local(obj, proj, l.vert.co)
-            l[uv].uv = (p.x * .5 + .5, p.y * .5 + .5)
+            l[uv].uv = (p.x * 0.5 + 0.5, p.y * 0.5 + 0.5)
 
     bm.to_mesh(obj.data)
     bm.free()
     obj.data.update()
+
 
 def apply_cyl(obj, proj):
     bm = bmesh.new()
@@ -428,33 +558,118 @@ def apply_cyl(obj, proj):
     uv = bm.loops.layers.uv.verify()
 
     for f in bm.faces:
+        # First compute raw cylindrical coordinates
+        us = []
+        vs = []
+        loops = []
         for l in f.loops:
             p = projector_local(obj, proj, l.vert.co)
             a = atan2(p.y, p.x)
-            l[uv].uv = ((a / (2*pi)) + .5, p.z * .5 + .5)
+            u = (a / (2 * pi)) + 0.5
+            v = p.z * 0.5 + 0.5
+            us.append(u)
+            vs.append(v)
+            loops.append(l)
+
+        # Make U continuous across seam (wrap over UDIM tiles)
+        us_cont = _unwrap_loop_sequence(us)
+
+        for l, u, v in zip(loops, us_cont, vs):
+            l[uv].uv = (u, v)
 
     bm.to_mesh(obj.data)
     bm.free()
     obj.data.update()
 
-def apply_cube(obj, proj):
+
+def apply_sphere(obj, proj):
+    """Spherical projection using projector as origin.
+    Horizontal (U) wraps so seams can cross UDIM tiles cleanly."""
     bm = bmesh.new()
     bm.from_mesh(obj.data)
     uv = bm.loops.layers.uv.verify()
 
     for f in bm.faces:
+        us = []
+        vs = []
+        loops = []
         for l in f.loops:
             p = projector_local(obj, proj, l.vert.co)
-            ax = max(range(3), key=lambda i: abs(p[i]))
+            if p.length_squared == 0.0:
+                u = 0.5
+                v = 0.5
+            else:
+                p_n = p.normalized()
+                u = (atan2(p_n.y, p_n.x) / (2 * pi)) + 0.5
+                z = max(-1.0, min(1.0, p_n.z))
+                # z in [-1,1] → v in [0,1]
+                v = 0.5 + (asin(z) / pi)
+            us.append(u)
+            vs.append(v)
+            loops.append(l)
 
-            if ax == 0:      # X dominant
-                u, v = (p.y * .5 + .5, p.z * .5 + .5)
-            elif ax == 1:    # Y dominant
-                u, v = (p.x * .5 + .5, p.z * .5 + .5)
-            else:            # Z dominant
-                u, v = (p.x * .5 + .5, p.y * .5 + .5)
+        us_cont = _unwrap_loop_sequence(us)
 
+        for l, u, v in zip(loops, us_cont, vs):
             l[uv].uv = (u, v)
+
+    bm.to_mesh(obj.data)
+    bm.free()
+    obj.data.update()
+
+
+def apply_cube(obj, proj):
+    import bmesh
+
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    uv = bm.loops.layers.uv.verify()
+
+    grid_w = 1.0 / 3.0
+    grid_h = 1.0 / 2.0
+    pad = 0.02
+
+    tiles = {
+        '+X': (0, 1),
+        '-X': (1, 1),
+        '+Y': (2, 1),
+        '-Y': (0, 0),
+        '+Z': (1, 0),
+        '-Z': (2, 0),
+    }
+
+    min_side = min(grid_w, grid_h)
+
+    for f in bm.faces:
+        n = f.normal
+        ax = max(range(3), key=lambda i: abs(n[i]))
+        sign = '+' if n[ax] >= 0 else '-'
+        face = sign + 'XYZ'[ax]
+
+        if ax == 0:
+            coord_u, coord_v = 1, 2  # y, z
+        elif ax == 1:
+            coord_u, coord_v = 0, 2  # x, z
+        else:
+            coord_u, coord_v = 0, 1  # x, y
+
+        tx, ty = tiles[face]
+        offset_u = (grid_w - min_side) / 2
+        offset_v = (grid_h - min_side) / 2
+
+        for l in f.loops:
+            p = projector_local(obj, proj, l.vert.co)
+            u = p[coord_u] * 0.5 + 0.5
+            v = p[coord_v] * 0.5 + 0.5
+
+            # pad inside tile
+            u = pad + u * (1 - 2 * pad)
+            v = pad + v * (1 - 2 * pad)
+
+            U = tx * grid_w + offset_u + u * min_side
+            V = ty * grid_h + offset_v + v * min_side
+
+            l[uv].uv = (U, V)
 
     bm.to_mesh(obj.data)
     bm.free()
@@ -462,8 +677,15 @@ def apply_cube(obj, proj):
 
 # ---------- Projector HANDLER ----------
 
-def projector_update(scene, depsgraph=None):
-    if not scene.uvproj_running:
+@persistent
+def projector_update(scene=None, depsgraph=None):
+    import bpy
+
+    # When called from depsgraph_update_post Blender passes only `depsgraph`
+    if scene is None or not hasattr(scene, "uvproj_running"):
+        scene = bpy.context.scene
+
+    if not getattr(scene, "uvproj_running", False):
         return
 
     proj = scene.uvproj_projector
@@ -476,14 +698,20 @@ def projector_update(scene, depsgraph=None):
         return
 
     scene["uvproj_last_matrix"] = current_matrix
-
     mode = proj.get("uvproj_mode", "PLANE")
+
+    from .helpers import get_targets, ensure_uv, apply_planar, apply_cyl, apply_cube, apply_sphere
 
     for ob in get_targets():
         ensure_uv(ob)
+
         if mode == "PLANE":
             apply_planar(ob, proj)
         elif mode == "CYL":
             apply_cyl(ob, proj)
-        else:
+        elif mode == "CUBE":
             apply_cube(ob, proj)
+        elif mode == "SPHERE":
+            apply_sphere(ob, proj)
+        else:
+            apply_planar(ob, proj)

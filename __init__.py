@@ -37,9 +37,7 @@
 # identifiers and structure may have been renamed/simplified to fit this add-on.
 # - Attribution above satisfies GPL 3.0-or-later requirements; licensing remains GPL‑3.0‑or‑later.
 
-# -----------------------------------------------------------------------------
-# BB UVs (Minimal + Move UVs + Normalize+Pack in one click)
-# -----------------------------------------------------------------------------
+
 
 bl_info = {
     "name": "BB UVs",
@@ -54,7 +52,26 @@ from .helpers import *
 from .operators import *
 from .panels import *
 
-# Register all classes and handlers
+
+def _uvproj_props_update(self, context):
+    """Re-fit and re-project when axis / keep-ratio changes."""
+    scene = context.scene
+    proj = scene.uvproj_projector
+    if not proj or proj.name not in bpy.data.objects:
+        return
+
+    mode = proj.get("uvproj_mode", "PLANE")
+
+    # Re-fit projector to its targets' bounding box
+    fit_projector(context, proj, mode)
+
+    # Re-apply projection to all targets
+    projector_update(scene)
+
+
+# -------------------------------------------------------------------------
+# Register
+# -------------------------------------------------------------------------
 def register():
     # Scene properties (no PropertyGroup needed)
     bpy.types.Scene.bb_density = bpy.props.FloatProperty(
@@ -62,31 +79,37 @@ def register():
         default=0.0, min=0.0, precision=3, step=1,
         description="Texel density (px/cm)"
     )
+
     bpy.types.Scene.bb_move_amount = bpy.props.FloatProperty(
         name="Amount",
         default=1.0, min=0.0, soft_max=10.0,
         description="Distance in UDIM tiles (1.0 = one tile)"
     )
+
     bpy.types.Scene.bb_move_selected_only = bpy.props.BoolProperty(
         name="Contextual Toggle",
         default=True,
         description="Edit Mode: only selected UVs. Object Mode: only active mesh."
     )
+
     bpy.types.Scene.bb_grid_image_path = bpy.props.StringProperty(
         name="Grid Image",
         default="", subtype='FILE_PATH',
         description="Path to the grid/UV texture"
     )
+
     bpy.types.Scene.bb_keep_td = bpy.props.BoolProperty(
         name="Keep TD",
         default=False,
         description="Keep current texel density (skip normalization and scaling during pack)"
     )
+
     bpy.types.Scene.bb_move_collection = bpy.props.BoolProperty(
         name="Collection",
         default=False,
         description="When ON, move all UVs from objects in the active object's collection"
     )
+
     bpy.types.Scene.bb_pack_rotate = bpy.props.BoolProperty(
         name="Rotation",
         default=True,
@@ -95,17 +118,43 @@ def register():
 
     # Projector-specific scene props
     bpy.types.Scene.uvproj_projector = bpy.props.PointerProperty(type=bpy.types.Object)
+
     bpy.types.Scene.uvproj_running = bpy.props.BoolProperty(default=False)
+
+    bpy.types.Scene.uvproj_keep_ratio = bpy.props.BoolProperty(
+        name="Keep Ratio",
+        default=True,
+        description="Uniformly fit projector to largest bounding box dimension",
+        update=_uvproj_props_update,
+    )
+
+    bpy.types.Scene.uvproj_axis = bpy.props.EnumProperty(
+        name="Axis",
+        description="Projection axis",
+        items=[
+            ('X', 'X', 'Project along X axis'),
+            ('Y', 'Y', 'Project along Y axis'),
+            ('Z', 'Z', 'Project along Z axis'),
+        ],
+        default='Z',
+        update=_uvproj_props_update,
+    )
 
     # Register classes from submodules
     for cls in operator_classes + panel_classes:
         bpy.utils.register_class(cls)
 
-    # Add projector handler
-    bpy.app.handlers.depsgraph_update_post.append(projector_update)
+    # Register handler ONCE
+    if projector_update not in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.append(projector_update)
 
+
+# -------------------------------------------------------------------------
+# Unregister
+# -------------------------------------------------------------------------
 def unregister():
-    # Remove projector handler
+
+    # Remove projector handler once
     if projector_update in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(projector_update)
 
@@ -121,8 +170,12 @@ def unregister():
     del bpy.types.Scene.bb_keep_td
     del bpy.types.Scene.bb_move_collection
     del bpy.types.Scene.bb_pack_rotate
+
     del bpy.types.Scene.uvproj_projector
     del bpy.types.Scene.uvproj_running
+    del bpy.types.Scene.uvproj_keep_ratio
+    del bpy.types.Scene.uvproj_axis
+
 
 if __name__ == "__main__":
     register()

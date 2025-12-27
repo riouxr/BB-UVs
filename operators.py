@@ -1135,6 +1135,11 @@ class BB_UVs_SetUI(bpy.types.Operator):
 # ---------- Projector operators ----------
 
 def _prepare_targets(ctx):
+    # If the user is in Edit Mode, switch to Object Mode so we work
+    # with whole mesh objects instead of component selections.
+    if getattr(ctx, "mode", "") and ctx.mode.startswith("EDIT_"):
+        bpy.ops.object.mode_set(mode='OBJECT')
+
     sel = [o for o in ctx.selected_objects if o.type == 'MESH']
     if not sel:
         return None
@@ -1142,6 +1147,7 @@ def _prepare_targets(ctx):
         o["uvproj_target"] = True
         H.ensure_uv(o)
     return sel
+
 
 class BB_UVs_ProjectorAddPlane(bpy.types.Operator):
     bl_idname = "bb_uvs.projector_add_plane"
@@ -1165,10 +1171,11 @@ class BB_UVs_ProjectorAddPlane(bpy.types.Operator):
         proj["uvproj_mode"] = "PLANE"
         proj.display_type = 'WIRE'
         proj.show_in_front = True
+        H.fit_projector(ctx, proj, "PLANE")
+
 
         ctx.scene.uvproj_projector = proj
-        ctx.scene.uvproj_running = True
-        H.projector_update(ctx.scene)
+        bpy.context.view_layer.update()
         return {'FINISHED'}
 
 class BB_UVs_ProjectorAddCylinder(bpy.types.Operator):
@@ -1193,10 +1200,42 @@ class BB_UVs_ProjectorAddCylinder(bpy.types.Operator):
         proj["uvproj_mode"] = "CYL"
         proj.display_type = 'WIRE'
         proj.show_in_front = True
+        H.fit_projector(ctx, proj, "CYL")
+
 
         ctx.scene.uvproj_projector = proj
         ctx.scene.uvproj_running = True
         H.projector_update(ctx.scene)
+        bpy.context.view_layer.update()
+        return {'FINISHED'}
+
+class BB_UVs_ProjectorAddSphere(bpy.types.Operator):
+    bl_idname = "bb_uvs.projector_add_sphere"
+    bl_label = "Add Spherical Projector"
+
+    def execute(self, ctx):
+        if not _prepare_targets(ctx):
+            self.report({'ERROR'}, "Select meshes first")
+            return {'CANCELLED'}
+
+        # --- remove existing projector first ---
+        old = ctx.scene.uvproj_projector
+        if old and old.name in bpy.data.objects:
+            bpy.data.objects.remove(old, do_unlink=True)
+            ctx.scene.uvproj_projector = None
+            ctx.scene["uvproj_last_matrix"] = None
+        # ---------------------------------------
+
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=1)
+        proj = ctx.active_object
+        proj["uvproj_mode"] = "SPHERE"
+        proj.display_type = 'WIRE'
+        proj.show_in_front = True
+        H.fit_projector(ctx, proj, "SPHERE")
+
+
+        ctx.scene.uvproj_projector = proj
+        bpy.context.view_layer.update()
         return {'FINISHED'}
 
 class BB_UVs_ProjectorAddCube(bpy.types.Operator):
@@ -1221,10 +1260,10 @@ class BB_UVs_ProjectorAddCube(bpy.types.Operator):
         proj["uvproj_mode"] = "CUBE"
         proj.display_type = 'WIRE'
         proj.show_in_front = True
+        H.fit_projector(ctx, proj, "CUBE")
 
         ctx.scene.uvproj_projector = proj
-        ctx.scene.uvproj_running = True
-        H.projector_update(ctx.scene)
+        bpy.context.view_layer.update()
         return {'FINISHED'}
 
 class BB_UVs_ProjectorApply(bpy.types.Operator):
@@ -1282,5 +1321,6 @@ operator_classes = (
     BB_UVs_ProjectorAddPlane,
     BB_UVs_ProjectorAddCylinder,
     BB_UVs_ProjectorAddCube,
+    BB_UVs_ProjectorAddSphere,
     BB_UVs_ProjectorApply,
 )

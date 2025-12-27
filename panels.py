@@ -122,13 +122,40 @@ def draw_bb_uvs_panel(self, context):
 
     # Projector section (integrated after Rotate)
     layout.separator()
-    layout.label(text="Projector")
+    layout.label(text="Projectors")
     col = layout.column(align=True)
-    col.operator("bb_uvs.projector_add_plane")
-    col.operator("bb_uvs.projector_add_cylinder")
-    col.operator("bb_uvs.projector_add_cube")
+
+    # --- NEW OPTIONS ---
+    col.prop(context.scene, "uvproj_keep_ratio")
+
+    row = col.row(align=True)
+    row.prop(context.scene, "uvproj_axis", expand=True)
+
     col.separator()
-    col.operator("bb_uvs.projector_apply")
+
+    # --- Projector creation buttons (icon + geometry name) ---
+    col.operator("bb_uvs.projector_add_plane",
+                 text="Planar",
+                 icon='MESH_PLANE')
+
+    col.operator("bb_uvs.projector_add_cylinder",
+                 text="Cylinder",
+                 icon='MESH_CYLINDER')
+
+    col.operator("bb_uvs.projector_add_cube",
+                 text="Cube",
+                 icon='MESH_CUBE')
+
+    col.operator("bb_uvs.projector_add_sphere",
+                 text="Sphere",
+                 icon='MESH_UVSPHERE')
+
+    col.separator()
+
+    # --- Apply / Remove ---
+    col.operator("bb_uvs.projector_apply",
+                 text="Apply and Remove")
+
 
     layout.separator()
     # Only show "Check and fix" in the UV Editor (IMAGE_EDITOR)
