@@ -1,12 +1,12 @@
 schema_version = "1.0.0"
 id = "bb_uvs"
-version = "2.0.0"
+version = "3.0.0"
 name = "BB UVs"
-tagline = "Manages UVs in object mode"
+tagline = "Manages UVs in object mode with live projection"
 maintainer = "Blender Bob"
 type = "add-on"
 website = "https://github.com/riouxr/BB-UVs"
-tags = ["Mesh", "UV"]
+tags = ["Mesh", "UV", "Projection"]
 blender_version_min = "4.5.0"
 license = ["SPDX:GPL-3.0-or-later"]
 copyright = ["2025 Robert Rioux"]
