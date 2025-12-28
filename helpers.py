@@ -38,10 +38,10 @@ def apply_axis_rotation(obj, axis):
     if axis == 'Z':
         return
     elif axis == 'X':
-        obj.rotation_euler = (0.0, -math.pi/2.0, 0.0)
+        obj.rotation_euler = (-math.pi / 2.0, -math.pi, math.pi / 2.0)
     elif axis == 'Y':
-        obj.rotation_euler = (math.pi/2.0, 0.0, 0.0)
-
+        obj.rotation_euler = (math.pi / 2.0, 0.0, 0.0)
+        
 
 def fit_projector(ctx, proj, mode):
     mn, mx = compute_selection_bbox(ctx)
@@ -108,7 +108,8 @@ def fit_projector(ctx, proj, mode):
             proj.scale = (L/base, L/base, L/base)
         else:
             proj.scale = (dx/base, dy/base, dz/base)
-
+    if mode == "CUBE" and axis in {"X", "Y"}:
+        axis = "Z"
     apply_axis_rotation(proj, axis)
     
 def _S(context):
