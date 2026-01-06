@@ -434,7 +434,8 @@ def _rotate_uvs_group_in_bmesh(bm, angle_deg=90.0, only_selected=True):
         if not uv_sync:
             for f in bm.faces:
                 for l in f.loops:
-                    if l[uv_layer].select: loops_to_rotate.append(l)
+                    # Blender 4.0+: BMLoopUV.select no longer exists, use vert.select
+                    if l.vert.select: loops_to_rotate.append(l)
         else:
             v_mode, e_mode, f_mode = tool.mesh_select_mode
             if f_mode:
@@ -478,7 +479,8 @@ def _flip_uvs_group_in_bmesh(bm, axis='H', only_selected=True):
         if not uv_sync:
             for f in bm.faces:
                 for l in f.loops:
-                    if l[uv_layer].select: loops_to_flip.append(l)
+                    # Blender 4.0+: BMLoopUV.select no longer exists, use vert.select
+                    if l.vert.select: loops_to_flip.append(l)
         else:
             v_mode, e_mode, f_mode = tool.mesh_select_mode
             if f_mode:

@@ -620,14 +620,9 @@ class BB_UVs_SelectFlipped(bpy.types.Operator):
                 
                 # If area is negative, the face is flipped
                 if area < 0:
-                    if sync:
-                        # In sync mode, select the mesh face
-                        tris[0].face.select = True
-                    else:
-                        # In non-sync mode, select the UVs
-                        for loop in tris[0].face.loops:
-                            loop[uv_layer].select = True
-                            loop[uv_layer].select_edge = True
+                    # Blender 4.0+: BMLoopUV.select no longer exists
+                    # Select the mesh face, which works in both sync and non-sync modes
+                    tris[0].face.select = True
                     local_counter += 1
             
             total_counter += local_counter
