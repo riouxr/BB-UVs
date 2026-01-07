@@ -192,8 +192,7 @@ class VIEW3D_PT_BB_UVs(bpy.types.Panel):
     def poll(cls, context):
         obj = context.active_object
         return (context.mode in {'EDIT_MESH', 'OBJECT'} and
-                obj and obj.type == 'MESH' and obj.data and
-                len(obj.data.uv_layers) > 0)
+                obj and obj.type == 'MESH')
     def draw(self, context):
         draw_bb_uvs_panel(self, context)
 
