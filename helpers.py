@@ -9,8 +9,11 @@ from bpy.app.handlers import persistent
 
 # ---------- General helpers ----------
 def compute_selection_bbox(ctx):
-    # Use current projector targets (uvproj_target) instead of current selection,
-    # so behavior stays stable even if user changes selection later.
+    """
+    Compute bounding box for projector targets.
+    - In Edit Mode: only compute bbox for selected faces (using edit mesh data)
+    - In Object Mode: compute bbox for entire objects
+    """
     obs = get_targets()
     if not obs:
         return None, None
@@ -18,8 +21,31 @@ def compute_selection_bbox(ctx):
     pts = []
     for o in obs:
         m = o.matrix_world
-        for v in o.bound_box:
-            pts.append(m @ Vector(v))
+        
+        # Check if we have selected faces stored (Edit Mode projection)
+        selected_faces = o.get("uvproj_selected_faces")
+        
+        if selected_faces is not None and o.mode == 'EDIT':
+            # Use edit mesh data to get correct coordinates
+            bm = bmesh.from_edit_mesh(o.data)
+            bm.faces.ensure_lookup_table()
+            
+            selected_verts = set()
+            for face_idx in selected_faces:
+                if face_idx < len(bm.faces):
+                    face = bm.faces[face_idx]
+                    for vert in face.verts:
+                        selected_verts.add(vert)
+            
+            for vert in selected_verts:
+                pts.append(m @ vert.co)
+        else:
+            # Use entire object bound box
+            for v in o.bound_box:
+                pts.append(m @ Vector(v))
+
+    if not pts:
+        return None, None
 
     mn = Vector((min(p.x for p in pts),
                  min(p.y for p in pts),
@@ -541,142 +567,321 @@ def _unwrap_loop_sequence(values, threshold=0.5):
 # ---------- Projector projections ----------
 
 def apply_planar(obj, proj):
-    bm = bmesh.new()
-    bm.from_mesh(obj.data)
-    uv = bm.loops.layers.uv.verify()
+    # Check if we should only project selected faces
+    selected_faces = obj.get("uvproj_selected_faces")
+    
+    # If object is in Edit Mode, work with the edit mesh directly
+    if obj.mode == 'EDIT':
+        bm = bmesh.from_edit_mesh(obj.data)
+        uv = bm.loops.layers.uv.active
+        if not uv:
+            return
+            
+        for f in bm.faces:
+            # Skip if we have a selection and this face isn't in it
+            if selected_faces is not None and f.index not in selected_faces:
+                continue
+                
+            for l in f.loops:
+                p = projector_local(obj, proj, l.vert.co)
+                l[uv].uv = (p.x * 0.5 + 0.5, p.y * 0.5 + 0.5)
+        
+        bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+    else:
+        # Object mode: work with a copy
+        bm = bmesh.new()
+        bm.from_mesh(obj.data)
+        uv = bm.loops.layers.uv.verify()
 
-    for f in bm.faces:
-        for l in f.loops:
-            p = projector_local(obj, proj, l.vert.co)
-            l[uv].uv = (p.x * 0.5 + 0.5, p.y * 0.5 + 0.5)
+        for f in bm.faces:
+            # Skip if we have a selection and this face isn't in it
+            if selected_faces is not None and f.index not in selected_faces:
+                continue
+                
+            for l in f.loops:
+                p = projector_local(obj, proj, l.vert.co)
+                l[uv].uv = (p.x * 0.5 + 0.5, p.y * 0.5 + 0.5)
 
-    bm.to_mesh(obj.data)
-    bm.free()
-    obj.data.update()
+        bm.to_mesh(obj.data)
+        bm.free()
+        obj.data.update()
 
 
 def apply_cyl(obj, proj):
-    bm = bmesh.new()
-    bm.from_mesh(obj.data)
-    uv = bm.loops.layers.uv.verify()
+    # Check if we should only project selected faces
+    selected_faces = obj.get("uvproj_selected_faces")
 
-    for f in bm.faces:
-        # First compute raw cylindrical coordinates
-        us = []
-        vs = []
-        loops = []
-        for l in f.loops:
-            p = projector_local(obj, proj, l.vert.co)
-            a = atan2(p.y, p.x)
-            u = (a / (2 * pi)) + 0.5
-            v = p.z * 0.5 + 0.5
-            us.append(u)
-            vs.append(v)
-            loops.append(l)
+    # If object is in Edit Mode, work with the edit mesh directly
+    if obj.mode == 'EDIT':
+        bm = bmesh.from_edit_mesh(obj.data)
+        uv = bm.loops.layers.uv.active
+        if not uv:
+            return
 
-        # Make U continuous across seam (wrap over UDIM tiles)
-        us_cont = _unwrap_loop_sequence(us)
+        for f in bm.faces:
+            # Skip if we have a selection and this face isn't in it
+            if selected_faces is not None and f.index not in selected_faces:
+                continue
+                
+            # First compute raw cylindrical coordinates
+            us = []
+            vs = []
+            loops = []
+            for l in f.loops:
+                p = projector_local(obj, proj, l.vert.co)
+                a = atan2(p.y, p.x)
+                u = (a / (2 * pi)) + 0.5
+                v = p.z * 0.5 + 0.5
+                us.append(u)
+                vs.append(v)
+                loops.append(l)
 
-        for l, u, v in zip(loops, us_cont, vs):
-            l[uv].uv = (u, v)
+            # Make U continuous across seam (wrap over UDIM tiles)
+            us_cont = _unwrap_loop_sequence(us)
 
-    bm.to_mesh(obj.data)
-    bm.free()
-    obj.data.update()
+            for l, u, v in zip(loops, us_cont, vs):
+                l[uv].uv = (u, v)
+
+        bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+    else:
+        # Object mode: work with a copy
+        bm = bmesh.new()
+        bm.from_mesh(obj.data)
+        uv = bm.loops.layers.uv.verify()
+
+        for f in bm.faces:
+            # Skip if we have a selection and this face isn't in it
+            if selected_faces is not None and f.index not in selected_faces:
+                continue
+                
+            # First compute raw cylindrical coordinates
+            us = []
+            vs = []
+            loops = []
+            for l in f.loops:
+                p = projector_local(obj, proj, l.vert.co)
+                a = atan2(p.y, p.x)
+                u = (a / (2 * pi)) + 0.5
+                v = p.z * 0.5 + 0.5
+                us.append(u)
+                vs.append(v)
+                loops.append(l)
+
+            # Make U continuous across seam (wrap over UDIM tiles)
+            us_cont = _unwrap_loop_sequence(us)
+
+            for l, u, v in zip(loops, us_cont, vs):
+                l[uv].uv = (u, v)
+
+        bm.to_mesh(obj.data)
+        bm.free()
+        obj.data.update()
 
 
 def apply_sphere(obj, proj):
     """Spherical projection using projector as origin.
     Horizontal (U) wraps so seams can cross UDIM tiles cleanly."""
-    bm = bmesh.new()
-    bm.from_mesh(obj.data)
-    uv = bm.loops.layers.uv.verify()
+    # Check if we should only project selected faces
+    selected_faces = obj.get("uvproj_selected_faces")
 
-    for f in bm.faces:
-        us = []
-        vs = []
-        loops = []
-        for l in f.loops:
-            p = projector_local(obj, proj, l.vert.co)
-            if p.length_squared == 0.0:
-                u = 0.5
-                v = 0.5
-            else:
-                p_n = p.normalized()
-                u = (atan2(p_n.y, p_n.x) / (2 * pi)) + 0.5
-                z = max(-1.0, min(1.0, p_n.z))
-                # z in [-1,1] → v in [0,1]
-                v = 0.5 + (asin(z) / pi)
-            us.append(u)
-            vs.append(v)
-            loops.append(l)
+    # If object is in Edit Mode, work with the edit mesh directly
+    if obj.mode == 'EDIT':
+        bm = bmesh.from_edit_mesh(obj.data)
+        uv = bm.loops.layers.uv.active
+        if not uv:
+            return
 
-        us_cont = _unwrap_loop_sequence(us)
+        for f in bm.faces:
+            # Skip if we have a selection and this face isn't in it
+            if selected_faces is not None and f.index not in selected_faces:
+                continue
+                
+            us = []
+            vs = []
+            loops = []
+            for l in f.loops:
+                p = projector_local(obj, proj, l.vert.co)
+                if p.length_squared == 0.0:
+                    u = 0.5
+                    v = 0.5
+                else:
+                    p_n = p.normalized()
+                    u = (atan2(p_n.y, p_n.x) / (2 * pi)) + 0.5
+                    z = max(-1.0, min(1.0, p_n.z))
+                    # z in [-1,1] → v in [0,1]
+                    v = 0.5 + (asin(z) / pi)
+                us.append(u)
+                vs.append(v)
+                loops.append(l)
 
-        for l, u, v in zip(loops, us_cont, vs):
-            l[uv].uv = (u, v)
+            us_cont = _unwrap_loop_sequence(us)
 
-    bm.to_mesh(obj.data)
-    bm.free()
-    obj.data.update()
+            for l, u, v in zip(loops, us_cont, vs):
+                l[uv].uv = (u, v)
+
+        bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+    else:
+        # Object mode: work with a copy
+        bm = bmesh.new()
+        bm.from_mesh(obj.data)
+        uv = bm.loops.layers.uv.verify()
+
+        for f in bm.faces:
+            # Skip if we have a selection and this face isn't in it
+            if selected_faces is not None and f.index not in selected_faces:
+                continue
+                
+            us = []
+            vs = []
+            loops = []
+            for l in f.loops:
+                p = projector_local(obj, proj, l.vert.co)
+                if p.length_squared == 0.0:
+                    u = 0.5
+                    v = 0.5
+                else:
+                    p_n = p.normalized()
+                    u = (atan2(p_n.y, p_n.x) / (2 * pi)) + 0.5
+                    z = max(-1.0, min(1.0, p_n.z))
+                    # z in [-1,1] → v in [0,1]
+                    v = 0.5 + (asin(z) / pi)
+                us.append(u)
+                vs.append(v)
+                loops.append(l)
+
+            us_cont = _unwrap_loop_sequence(us)
+
+            for l, u, v in zip(loops, us_cont, vs):
+                l[uv].uv = (u, v)
+
+        bm.to_mesh(obj.data)
+        bm.free()
+        obj.data.update()
 
 
 def apply_cube(obj, proj):
     import bmesh
 
-    bm = bmesh.new()
-    bm.from_mesh(obj.data)
-    uv = bm.loops.layers.uv.verify()
+    # Check if we should only project selected faces
+    selected_faces = obj.get("uvproj_selected_faces")
 
-    grid_w = 1.0 / 3.0
-    grid_h = 1.0 / 2.0
-    pad = 0.02
+    # If object is in Edit Mode, work with the edit mesh directly
+    if obj.mode == 'EDIT':
+        bm = bmesh.from_edit_mesh(obj.data)
+        uv = bm.loops.layers.uv.active
+        if not uv:
+            return
 
-    tiles = {
-        '+X': (0, 1),
-        '-X': (1, 1),
-        '+Y': (2, 1),
-        '-Y': (0, 0),
-        '+Z': (1, 0),
-        '-Z': (2, 0),
-    }
+        grid_w = 1.0 / 3.0
+        grid_h = 1.0 / 2.0
+        pad = 0.02
 
-    min_side = min(grid_w, grid_h)
+        tiles = {
+            '+X': (0, 1),
+            '-X': (1, 1),
+            '+Y': (2, 1),
+            '-Y': (0, 0),
+            '+Z': (1, 0),
+            '-Z': (2, 0),
+        }
 
-    for f in bm.faces:
-        n = f.normal
-        ax = max(range(3), key=lambda i: abs(n[i]))
-        sign = '+' if n[ax] >= 0 else '-'
-        face = sign + 'XYZ'[ax]
+        min_side = min(grid_w, grid_h)
 
-        if ax == 0:
-            coord_u, coord_v = 1, 2  # y, z
-        elif ax == 1:
-            coord_u, coord_v = 0, 2  # x, z
-        else:
-            coord_u, coord_v = 0, 1  # x, y
+        for f in bm.faces:
+            # Skip if we have a selection and this face isn't in it
+            if selected_faces is not None and f.index not in selected_faces:
+                continue
+                
+            n = f.normal
+            ax = max(range(3), key=lambda i: abs(n[i]))
+            sign = '+' if n[ax] >= 0 else '-'
+            face = sign + 'XYZ'[ax]
 
-        tx, ty = tiles[face]
-        offset_u = (grid_w - min_side) / 2
-        offset_v = (grid_h - min_side) / 2
+            if ax == 0:
+                coord_u, coord_v = 1, 2  # y, z
+            elif ax == 1:
+                coord_u, coord_v = 0, 2  # x, z
+            else:
+                coord_u, coord_v = 0, 1  # x, y
 
-        for l in f.loops:
-            p = projector_local(obj, proj, l.vert.co)
-            u = p[coord_u] * 0.5 + 0.5
-            v = p[coord_v] * 0.5 + 0.5
+            tx, ty = tiles[face]
+            offset_u = (grid_w - min_side) / 2
+            offset_v = (grid_h - min_side) / 2
 
-            # pad inside tile
-            u = pad + u * (1 - 2 * pad)
-            v = pad + v * (1 - 2 * pad)
+            for l in f.loops:
+                p = projector_local(obj, proj, l.vert.co)
+                u = p[coord_u] * 0.5 + 0.5
+                v = p[coord_v] * 0.5 + 0.5
 
-            U = tx * grid_w + offset_u + u * min_side
-            V = ty * grid_h + offset_v + v * min_side
+                # pad inside tile
+                u = pad + u * (1 - 2 * pad)
+                v = pad + v * (1 - 2 * pad)
 
-            l[uv].uv = (U, V)
+                U = tx * grid_w + offset_u + u * min_side
+                V = ty * grid_h + offset_v + v * min_side
 
-    bm.to_mesh(obj.data)
-    bm.free()
-    obj.data.update()
+                l[uv].uv = (U, V)
+
+        bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+    else:
+        # Object mode: work with a copy
+        bm = bmesh.new()
+        bm.from_mesh(obj.data)
+        uv = bm.loops.layers.uv.verify()
+
+        grid_w = 1.0 / 3.0
+        grid_h = 1.0 / 2.0
+        pad = 0.02
+
+        tiles = {
+            '+X': (0, 1),
+            '-X': (1, 1),
+            '+Y': (2, 1),
+            '-Y': (0, 0),
+            '+Z': (1, 0),
+            '-Z': (2, 0),
+        }
+
+        min_side = min(grid_w, grid_h)
+
+        for f in bm.faces:
+            # Skip if we have a selection and this face isn't in it
+            if selected_faces is not None and f.index not in selected_faces:
+                continue
+                
+            n = f.normal
+            ax = max(range(3), key=lambda i: abs(n[i]))
+            sign = '+' if n[ax] >= 0 else '-'
+            face = sign + 'XYZ'[ax]
+
+            if ax == 0:
+                coord_u, coord_v = 1, 2  # y, z
+            elif ax == 1:
+                coord_u, coord_v = 0, 2  # x, z
+            else:
+                coord_u, coord_v = 0, 1  # x, y
+
+            tx, ty = tiles[face]
+            offset_u = (grid_w - min_side) / 2
+            offset_v = (grid_h - min_side) / 2
+
+            for l in f.loops:
+                p = projector_local(obj, proj, l.vert.co)
+                u = p[coord_u] * 0.5 + 0.5
+                v = p[coord_v] * 0.5 + 0.5
+
+                # pad inside tile
+                u = pad + u * (1 - 2 * pad)
+                v = pad + v * (1 - 2 * pad)
+
+                U = tx * grid_w + offset_u + u * min_side
+                V = ty * grid_h + offset_v + v * min_side
+
+                l[uv].uv = (U, V)
+
+        bm.to_mesh(obj.data)
+        bm.free()
+        obj.data.update()
 
 # ---------- Projector HANDLER ----------
 
