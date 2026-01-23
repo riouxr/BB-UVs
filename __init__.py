@@ -42,7 +42,7 @@
 bl_info = {
     "name": "BB UVs",
     "author": "Robert + ChatGPT",
-    "version": (3, 0, 3),
+    "version": (3, 1, 0),
     "blender": (3, 6, 0),
     "category": "UV",
 }

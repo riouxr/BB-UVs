@@ -1130,9 +1130,12 @@ class BB_UVs_SetUI(bpy.types.Operator):
 # ---------- Projector operators ----------
 
 def _prepare_targets(ctx):
-    # If the user is in Edit Mode, switch to Object Mode so we work
-    # with whole mesh objects instead of component selections.
-    if getattr(ctx, "mode", "") and ctx.mode.startswith("EDIT_"):
+    # Check if we're in Edit Mode
+    was_in_edit_mode = getattr(ctx, "mode", "") and ctx.mode.startswith("EDIT_")
+    
+    # If the user is in Edit Mode, switch to Object Mode
+    # BUT the face selection is preserved in the mesh data
+    if was_in_edit_mode:
         bpy.ops.object.mode_set(mode='OBJECT')
 
     sel = [o for o in ctx.selected_objects if o.type == 'MESH']
@@ -1140,6 +1143,7 @@ def _prepare_targets(ctx):
         return None
     for o in sel:
         o["uvproj_target"] = True
+        o["uvproj_was_edit_mode"] = was_in_edit_mode  # Store flag
         H.ensure_uv(o)
     return sel
 
@@ -1175,7 +1179,7 @@ class BB_UVs_ProjectorAddPlane(bpy.types.Operator):
         if "uvproj_last_matrix" in ctx.scene:
             del ctx.scene["uvproj_last_matrix"]
 
-        H.projector_update()
+        H.projector_update(ctx.scene)
         return {'FINISHED'}
 
 
@@ -1211,7 +1215,7 @@ class BB_UVs_ProjectorAddCylinder(bpy.types.Operator):
         if "uvproj_last_matrix" in ctx.scene:
             del ctx.scene["uvproj_last_matrix"]
 
-        H.projector_update()
+        H.projector_update(ctx.scene)
         return {'FINISHED'}
 
 
@@ -1247,7 +1251,7 @@ class BB_UVs_ProjectorAddSphere(bpy.types.Operator):
         if "uvproj_last_matrix" in ctx.scene:
             del ctx.scene["uvproj_last_matrix"]
 
-        H.projector_update()
+        H.projector_update(ctx.scene)
         return {'FINISHED'}
 
 class BB_UVs_ProjectorAddCube(bpy.types.Operator):
@@ -1281,7 +1285,7 @@ class BB_UVs_ProjectorAddCube(bpy.types.Operator):
         if "uvproj_last_matrix" in ctx.scene:
             del ctx.scene["uvproj_last_matrix"]
 
-        H.projector_update()
+        H.projector_update(ctx.scene)
         return {'FINISHED'}
 
 

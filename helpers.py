@@ -545,10 +545,25 @@ def apply_planar(obj, proj):
     bm.from_mesh(obj.data)
     uv = bm.loops.layers.uv.verify()
 
-    for f in bm.faces:
-        for l in f.loops:
-            p = projector_local(obj, proj, l.vert.co)
-            l[uv].uv = (p.x * 0.5 + 0.5, p.y * 0.5 + 0.5)
+    # Only check selection if projector was created from Edit Mode
+    was_edit_mode = obj.get("uvproj_was_edit_mode", False)
+    
+    if was_edit_mode:
+        # Edit Mode workflow - respect selection
+        has_selection = any(face.select for face in bm.faces)
+        for f in bm.faces:
+            if has_selection and not f.select:
+                continue
+                
+            for l in f.loops:
+                p = projector_local(obj, proj, l.vert.co)
+                l[uv].uv = (p.x * 0.5 + 0.5, p.y * 0.5 + 0.5)
+    else:
+        # Object Mode workflow - process all faces
+        for f in bm.faces:
+            for l in f.loops:
+                p = projector_local(obj, proj, l.vert.co)
+                l[uv].uv = (p.x * 0.5 + 0.5, p.y * 0.5 + 0.5)
 
     bm.to_mesh(obj.data)
     bm.free()
@@ -560,7 +575,13 @@ def apply_cyl(obj, proj):
     bm.from_mesh(obj.data)
     uv = bm.loops.layers.uv.verify()
 
+    was_edit_mode = obj.get("uvproj_was_edit_mode", False)
+    has_selection = was_edit_mode and any(face.select for face in bm.faces)
+
     for f in bm.faces:
+        if has_selection and not f.select:
+            continue
+            
         # First compute raw cylindrical coordinates
         us = []
         vs = []
@@ -592,7 +613,13 @@ def apply_sphere(obj, proj):
     bm.from_mesh(obj.data)
     uv = bm.loops.layers.uv.verify()
 
+    was_edit_mode = obj.get("uvproj_was_edit_mode", False)
+    has_selection = was_edit_mode and any(face.select for face in bm.faces)
+
     for f in bm.faces:
+        if has_selection and not f.select:
+            continue
+            
         us = []
         vs = []
         loops = []
@@ -642,8 +669,14 @@ def apply_cube(obj, proj):
     }
 
     min_side = min(grid_w, grid_h)
+    
+    was_edit_mode = obj.get("uvproj_was_edit_mode", False)
+    has_selection = was_edit_mode and any(face.select for face in bm.faces)
 
     for f in bm.faces:
+        if has_selection and not f.select:
+            continue
+            
         n = f.normal
         ax = max(range(3), key=lambda i: abs(n[i]))
         sign = '+' if n[ax] >= 0 else '-'
@@ -682,10 +715,6 @@ def apply_cube(obj, proj):
 
 @persistent
 def projector_update(depsgraph=None):
-    """Handler for live UV updates. Called from depsgraph_update_post.
-    
-    Always updates UVs when projector is active to ensure live feedback.
-    """
     import bpy
 
     scene = bpy.context.scene
