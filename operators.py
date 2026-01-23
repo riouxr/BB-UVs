@@ -1130,46 +1130,16 @@ class BB_UVs_SetUI(bpy.types.Operator):
 # ---------- Projector operators ----------
 
 def _prepare_targets(ctx):
-    """
-    Prepare target objects for projection.
-    - In Object Mode: mark selected mesh objects as targets
-    - In Edit Mode: mark objects in edit mode and store selected face indices
-    """
-    mode = getattr(ctx, "mode", "")
-    
-    # If in Edit Mode, store which faces are selected WITHOUT switching modes
-    if mode == 'EDIT_MESH':
-        sel = [o for o in ctx.objects_in_mode if o.type == 'MESH']
-        if not sel:
-            return None
-        
-        targets = []
-        for o in sel:
-            # Store selected face indices from edit mesh
-            bm = bmesh.from_edit_mesh(o.data)
-            selected_faces = [f.index for f in bm.faces if f.select]
-            
-            if not selected_faces:
-                # If no faces selected, skip this object
-                continue
-                
-            o["uvproj_target"] = True
-            o["uvproj_selected_faces"] = selected_faces
-            H.ensure_uv(o)
-            targets.append(o)
-        
-        # Return all objects that had selected faces
-        return targets if targets else None
-    
-    # Object Mode: just mark all selected meshes
+    # If the user is in Edit Mode, switch to Object Mode so we work
+    # with whole mesh objects instead of component selections.
+    if getattr(ctx, "mode", "") and ctx.mode.startswith("EDIT_"):
+        bpy.ops.object.mode_set(mode='OBJECT')
+
     sel = [o for o in ctx.selected_objects if o.type == 'MESH']
     if not sel:
         return None
     for o in sel:
         o["uvproj_target"] = True
-        # Clear face selection data in Object Mode
-        if "uvproj_selected_faces" in o:
-            del o["uvproj_selected_faces"]
         H.ensure_uv(o)
     return sel
 
@@ -1191,11 +1161,6 @@ class BB_UVs_ProjectorAddPlane(bpy.types.Operator):
             ctx.scene["uvproj_last_matrix"] = None
         # ---------------------------------------
 
-        # CRITICAL: Switch to Object Mode before adding primitive
-        # Otherwise primitive gets added to the active mesh in Edit Mode
-        if ctx.mode == 'EDIT_MESH':
-            bpy.ops.object.mode_set(mode='OBJECT')
-
         bpy.ops.mesh.primitive_plane_add(size=2)
         proj = ctx.active_object
         proj["uvproj_mode"] = "PLANE"
@@ -1210,7 +1175,7 @@ class BB_UVs_ProjectorAddPlane(bpy.types.Operator):
         if "uvproj_last_matrix" in ctx.scene:
             del ctx.scene["uvproj_last_matrix"]
 
-        H.projector_update(ctx.scene)
+        H.projector_update()
         return {'FINISHED'}
 
 
@@ -1231,10 +1196,6 @@ class BB_UVs_ProjectorAddCylinder(bpy.types.Operator):
             ctx.scene["uvproj_last_matrix"] = None
         # ---------------------------------------
 
-        # CRITICAL: Switch to Object Mode before adding primitive
-        if ctx.mode == 'EDIT_MESH':
-            bpy.ops.object.mode_set(mode='OBJECT')
-
         bpy.ops.mesh.primitive_cylinder_add(radius=1, depth=2)
         proj = ctx.active_object
         proj["uvproj_mode"] = "CYL"
@@ -1250,7 +1211,7 @@ class BB_UVs_ProjectorAddCylinder(bpy.types.Operator):
         if "uvproj_last_matrix" in ctx.scene:
             del ctx.scene["uvproj_last_matrix"]
 
-        H.projector_update(ctx.scene)
+        H.projector_update()
         return {'FINISHED'}
 
 
@@ -1271,10 +1232,6 @@ class BB_UVs_ProjectorAddSphere(bpy.types.Operator):
             ctx.scene["uvproj_last_matrix"] = None
         # ---------------------------------------
 
-        # CRITICAL: Switch to Object Mode before adding primitive
-        if ctx.mode == 'EDIT_MESH':
-            bpy.ops.object.mode_set(mode='OBJECT')
-
         bpy.ops.mesh.primitive_uv_sphere_add(radius=1)
         proj = ctx.active_object
         proj["uvproj_mode"] = "SPHERE"
@@ -1290,7 +1247,7 @@ class BB_UVs_ProjectorAddSphere(bpy.types.Operator):
         if "uvproj_last_matrix" in ctx.scene:
             del ctx.scene["uvproj_last_matrix"]
 
-        H.projector_update(ctx.scene)
+        H.projector_update()
         return {'FINISHED'}
 
 class BB_UVs_ProjectorAddCube(bpy.types.Operator):
@@ -1310,10 +1267,6 @@ class BB_UVs_ProjectorAddCube(bpy.types.Operator):
             ctx.scene["uvproj_last_matrix"] = None
         # ---------------------------------------
 
-        # CRITICAL: Switch to Object Mode before adding primitive
-        if ctx.mode == 'EDIT_MESH':
-            bpy.ops.object.mode_set(mode='OBJECT')
-
         bpy.ops.mesh.primitive_cube_add(size=2)
         proj = ctx.active_object
         proj["uvproj_mode"] = "CUBE"
@@ -1328,7 +1281,7 @@ class BB_UVs_ProjectorAddCube(bpy.types.Operator):
         if "uvproj_last_matrix" in ctx.scene:
             del ctx.scene["uvproj_last_matrix"]
 
-        H.projector_update(ctx.scene)
+        H.projector_update()
         return {'FINISHED'}
 
 
@@ -1345,9 +1298,6 @@ class BB_UVs_ProjectorApply(bpy.types.Operator):
 
         for o in targets:
             del o["uvproj_target"]
-            # Clean up selected faces data
-            if "uvproj_selected_faces" in o:
-                del o["uvproj_selected_faces"]
 
         proj = ctx.scene.uvproj_projector
         if proj:

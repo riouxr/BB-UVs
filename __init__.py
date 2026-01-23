@@ -42,7 +42,7 @@
 bl_info = {
     "name": "BB UVs",
     "author": "Robert + ChatGPT",
-    "version": (3, 0, 2),
+    "version": (3, 0, 3),
     "blender": (3, 6, 0),
     "category": "UV",
 }
@@ -66,7 +66,7 @@ def _uvproj_props_update(self, context):
     fit_projector(context, proj, mode)
 
     # Re-apply projection to all targets
-    projector_update(scene)
+    projector_update()
 
 
 # -------------------------------------------------------------------------
