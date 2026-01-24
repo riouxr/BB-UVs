@@ -1183,6 +1183,24 @@ class BB_UVs_ProjectorAddPlane(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class BB_UVs_ProjectorFlip(bpy.types.Operator):
+    bl_idname = "bb_uvs.projector_flip"
+    bl_label = "Flip Projector"
+    
+    def execute(self, ctx):
+        proj = ctx.scene.uvproj_projector
+        if not proj or proj.name not in bpy.data.objects:
+            self.report({'ERROR'}, "No active projector")
+            return {'CANCELLED'}
+        
+        # Multiply scale X by -1 to flip the UVs
+        proj.scale.x *= -1
+        
+        # Trigger UV update
+        H.projector_update(ctx.scene)
+        return {'FINISHED'}
+
+
 class BB_UVs_ProjectorAddCylinder(bpy.types.Operator):
     bl_idname = "bb_uvs.projector_add_cylinder"
     bl_label = "Add Cylindrical Projector"
@@ -1342,6 +1360,7 @@ operator_classes = (
     BB_UVs_SelectZeroArea,
     BB_UVs_SetUI,
     BB_UVs_ProjectorAddPlane,
+    BB_UVs_ProjectorFlip,
     BB_UVs_ProjectorAddCylinder,
     BB_UVs_ProjectorAddCube,
     BB_UVs_ProjectorAddSphere,

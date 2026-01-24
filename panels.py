@@ -134,9 +134,13 @@ def draw_bb_uvs_panel(self, context):
     col.separator()
 
     # --- Projector creation buttons (icon + geometry name) ---
-    col.operator("bb_uvs.projector_add_plane",
+    row = col.row(align=True)
+    row.operator("bb_uvs.projector_add_plane",
                  text="Planar",
                  icon='MESH_PLANE')
+    row.operator("bb_uvs.projector_flip",
+                 text="Flip",
+                 icon='ARROW_LEFTRIGHT')
 
     col.operator("bb_uvs.projector_add_cylinder",
                  text="Cylinder",
