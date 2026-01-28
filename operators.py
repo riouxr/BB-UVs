@@ -387,7 +387,7 @@ class BB_UVs_NormalizePack(bpy.types.Operator):
                  "margin": args.get("margin", 0.00195312)}
         return bpy.ops.uv.pack_islands('EXEC_DEFAULT', **args4)
     @staticmethod
-    def _snap_uvs_to_first_udim_all():
+    def _snap_uvs_to_first_udim_all(only_selected=True):
         objs = [o for o in bpy.context.objects_in_mode if o.type == 'MESH']
         if not objs: return
         min_u = float('inf'); min_v = float('inf')
@@ -396,7 +396,7 @@ class BB_UVs_NormalizePack(bpy.types.Operator):
             uv_layer = bm.loops.layers.uv.active
             if not uv_layer: continue
             for f in bm.faces:
-                if not f.select: continue
+                if only_selected and not f.select: continue
                 for l in f.loops:
                     uv = l[uv_layer].uv
                     if uv.x < min_u: min_u = uv.x
@@ -409,7 +409,7 @@ class BB_UVs_NormalizePack(bpy.types.Operator):
             uv_layer = bm.loops.layers.uv.active
             if not uv_layer: continue
             for f in bm.faces:
-                if not f.select: continue
+                if only_selected and not f.select: continue
                 for l in f.loops:
                     uv = l[uv_layer].uv
                     uv.x += du; uv.y += dv
@@ -466,15 +466,22 @@ class BB_UVs_NormalizePack(bpy.types.Operator):
         if start_mode == 'EDIT_MESH':
             ts = context.tool_settings
             ts.mesh_select_mode = (False, False, True)
-            bpy.ops.mesh.select_all(action='SELECT')
-            try: bpy.ops.uv.select_all(action='SELECT')
-            except Exception: pass
+            # Only select all if in Highlighted mode (bb_move_selected_only = True)
+            # In Selected mode (bb_move_selected_only = False), work with current selection
+            if S.bb_move_selected_only:
+                bpy.ops.mesh.select_all(action='SELECT')
+                try: bpy.ops.uv.select_all(action='SELECT')
+                except Exception: pass
             if not S.bb_keep_td:
-                tot_fac = self._compute_global_tot_fac(only_selected=True)
+                # Use only_selected based on mode: True for Selected mode, False for Highlighted mode
+                only_selected = not S.bb_move_selected_only
+                tot_fac = self._compute_global_tot_fac(only_selected=only_selected)
                 if tot_fac is None:
                     self.report({'WARNING'}, "Not enough UV/mesh data to normalize"); return {'CANCELLED'}
-                self._normalize_all_edit_meshes_to_fac(tot_fac, only_selected=True)
-            self._call_pack(args); self._snap_uvs_to_first_udim_all()
+                self._normalize_all_edit_meshes_to_fac(tot_fac, only_selected=only_selected)
+            # Use only_selected based on mode: True for Selected mode, False for Highlighted mode
+            only_selected = not S.bb_move_selected_only
+            self._call_pack(args); self._snap_uvs_to_first_udim_all(only_selected=only_selected)
             return {'FINISHED'}
         prev_active = active; prev_selection = context.selected_objects[:]
         targets = [o for o in prev_selection if H._object_is_uv_mesh(o)]
@@ -499,7 +506,7 @@ class BB_UVs_NormalizePack(bpy.types.Operator):
                 context.view_layer.objects.active = prev_active
                 self.report({'WARNING'}, "Not enough UV/mesh data to normalize"); return {'CANCELLED'}
             self._normalize_all_edit_meshes_to_fac(tot_fac, only_selected=False)
-        self._call_pack(args); self._snap_uvs_to_first_udim_all()
+        self._call_pack(args); self._snap_uvs_to_first_udim_all(only_selected=False)
         bpy.ops.object.mode_set(mode='OBJECT')
         for o in bpy.data.objects: o.select_set(False)
         for o in prev_selection:
@@ -525,16 +532,26 @@ class BB_UVs_PackIndividually(bpy.types.Operator):
         original_selection = context.selected_objects[:]
         original_active = active
         original_edit_objs = list(context.objects_in_mode) if start_mode == 'EDIT_MESH' else []
+        
+        # Determine targets based on mode and selection
         if start_mode == 'EDIT_MESH':
-            targets = [o for o in original_edit_objs if H._object_is_uv_mesh(o)]
+            if S.bb_move_selected_only:
+                # Highlighted mode: only active object
+                targets = [active] if H._object_is_uv_mesh(active) else []
+            else:
+                # Selected mode: all objects in edit mode
+                targets = [o for o in original_edit_objs if H._object_is_uv_mesh(o)]
         else:
             targets = [o for o in original_selection if H._object_is_uv_mesh(o)]
+        
         if not targets:
             self.report({'WARNING'}, "No selected meshes with UVs to pack"); return {'CANCELLED'}
-        def _normalize_single(obj):
+        
+        def _normalize_single(obj, only_sel):
             bm = bmesh.from_edit_mesh(obj.data)
-            H._normalize_islands_in_bmesh(bm, xy_independent=True, only_selected=False, respect_aspect=True)
+            H._normalize_islands_in_bmesh(bm, xy_independent=True, only_selected=only_sel, respect_aspect=True)
             bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+        
         for obj in targets:
             if context.mode == 'EDIT_MESH':
                 bpy.ops.object.mode_set(mode='OBJECT')
@@ -543,14 +560,25 @@ class BB_UVs_PackIndividually(bpy.types.Operator):
             bpy.ops.object.mode_set(mode='EDIT')
             ts = context.tool_settings
             ts.mesh_select_mode = (False, False, True)
-            bpy.ops.mesh.select_all(action='SELECT')
-            try: bpy.ops.uv.select_all(action='SELECT')
-            except Exception: pass
+            
+            # Only select all if in Highlighted mode when starting from edit mode
+            # OR if we were in object mode (always pack all UVs in object mode)
+            if start_mode != 'EDIT_MESH' or S.bb_move_selected_only:
+                bpy.ops.mesh.select_all(action='SELECT')
+                try: bpy.ops.uv.select_all(action='SELECT')
+                except Exception: pass
+            
             if not S.bb_keep_td:
-                _normalize_single(obj)
+                # Pass only_selected based on: edit mode AND Selected mode (not Highlighted)
+                only_sel = (start_mode == 'EDIT_MESH' and not S.bb_move_selected_only)
+                _normalize_single(obj, only_sel)
+            
             BB_UVs_NormalizePack._call_pack(args)
-            BB_UVs_NormalizePack._snap_uvs_to_first_udim_all()
+            # Pass only_selected based on: edit mode AND Selected mode (not Highlighted)
+            only_sel = (start_mode == 'EDIT_MESH' and not S.bb_move_selected_only)
+            BB_UVs_NormalizePack._snap_uvs_to_first_udim_all(only_selected=only_sel)
             bpy.ops.object.mode_set(mode='OBJECT')
+        
         for o in bpy.data.objects: o.select_set(False)
         for o in original_selection:
             if o and o.name in bpy.data.objects: o.select_set(True)
@@ -1318,8 +1346,16 @@ class BB_UVs_ProjectorApply(bpy.types.Operator):
         if "uvproj_last_matrix" in ctx.scene:
             del ctx.scene["uvproj_last_matrix"]
 
+        # Check if any target was originally in edit mode
+        was_edit_mode = False
         for o in targets:
-            del o["uvproj_target"]
+            if "uvproj_was_edit_mode" in o and o["uvproj_was_edit_mode"]:
+                was_edit_mode = True
+            # Clean up custom properties
+            if "uvproj_target" in o:
+                del o["uvproj_target"]
+            if "uvproj_was_edit_mode" in o:
+                del o["uvproj_was_edit_mode"]
 
         proj = ctx.scene.uvproj_projector
         if proj:
@@ -1332,6 +1368,10 @@ class BB_UVs_ProjectorApply(bpy.types.Operator):
             if active is None or active not in targets:
                 ctx.view_layer.objects.active = targets[0]
                 targets[0].select_set(True)
+            
+            # Return to edit mode if we were in edit mode before
+            if was_edit_mode:
+                bpy.ops.object.mode_set(mode='EDIT')
 
         return {'FINISHED'}
 
