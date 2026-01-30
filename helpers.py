@@ -288,14 +288,20 @@ def _move_uvs_edit(o, dx, dy, only_selected=False):
     if uv_layer is None:
         return
     bm.faces.ensure_lookup_table()
+    
+    # Store and disable sticky selection
+    tool = bpy.context.tool_settings
+    sticky_mode = tool.uv_sticky_select_mode
+    tool.uv_sticky_select_mode = 'DISABLED'
+    
     if not only_selected:
         for f in bm.faces:
             for loop in f.loops:
                 uv = loop[uv_layer].uv
                 uv.x += dx; uv.y += dy
         bmesh.update_edit_mesh(o.data, loop_triangles=False, destructive=False)
+        tool.uv_sticky_select_mode = sticky_mode
         return
-    tool = bpy.context.tool_settings
     uv_sync = tool.use_uv_select_sync
     if not uv_sync:
         for f in bm.faces:
@@ -305,6 +311,7 @@ def _move_uvs_edit(o, dx, dy, only_selected=False):
                 uv = loop[uv_layer].uv
                 uv.x += dx; uv.y += dy
         bmesh.update_edit_mesh(o.data, loop_triangles=False, destructive=False)
+        tool.uv_sticky_select_mode = sticky_mode
         return
     v_mode, e_mode, f_mode = tool.mesh_select_mode
     if f_mode:
@@ -322,6 +329,7 @@ def _move_uvs_edit(o, dx, dy, only_selected=False):
                 uv = loop[uv_layer].uv
                 uv.x += dx; uv.y += dy
     bmesh.update_edit_mesh(o.data, loop_triangles=False, destructive=False)
+    tool.uv_sticky_select_mode = sticky_mode
 
 # ---------- Normalize helpers ----------
 
