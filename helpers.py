@@ -300,7 +300,7 @@ def _move_uvs_edit(o, dx, dy, only_selected=False):
     if not uv_sync:
         for f in bm.faces:
             for loop in f.loops:
-                if not loop[uv_layer].select:
+                if not loop.uv_select_vert:
                     continue
                 uv = loop[uv_layer].uv
                 uv.x += dx; uv.y += dy

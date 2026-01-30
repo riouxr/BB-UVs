@@ -724,8 +724,8 @@ class BB_UVs_SelectCrossUDIMs(bpy.types.Operator):
                             f.select = True
                         else:
                             for loop in f.loops:
-                                loop[uv_layer].select = True
-                                loop[uv_layer].select_edge = True
+                                loop.uv_select_vert_set(True)
+                                loop.uv_select_edge_set(True)
                         local_counter += 1
                     
                     processed_islands.add(id(island))
@@ -944,12 +944,12 @@ class BB_UVs_SelectBoundaries(bpy.types.Operator):
                     if math.copysign(1, area) != outer_sign:
                         for face, i in loops[idx]:
                             # Select the edge
-                            face.loops[i][uv_layer].select_edge = True
+                            face.loops[i].uv_select_edge_set(True)
                             
                             # Also select the two UV vertices for better visibility
-                            face.loops[i][uv_layer].select = True
+                            face.loops[i].uv_select_vert_set(True)
                             next_i = (i + 1) % len(face.loops)
-                            face.loops[next_i][uv_layer].select = True
+                            face.loops[next_i].uv_select_vert_set(True)
                             
                             total_selected += 1
 
@@ -1087,8 +1087,8 @@ class BB_UVs_SelectZeroArea(bpy.types.Operator):
                 area = H._poly_uv_area(face, uv_layer)
                 if area <= 1e-8:  # near-zero UV area
                     for loop in face.loops:
-                        loop[uv_layer].select = True
-                        loop[uv_layer].select_edge = True
+                        loop.uv_select_vert_set(True)
+                        loop.uv_select_edge_set(True)
                     total += 1
 
             bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
