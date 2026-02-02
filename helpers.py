@@ -18,8 +18,33 @@ def compute_selection_bbox(ctx):
     pts = []
     for o in obs:
         m = o.matrix_world
-        for v in o.bound_box:
-            pts.append(m @ Vector(v))
+        # Check if object was in edit mode with face selection
+        was_edit_mode = o.get("uvproj_was_edit_mode", False)
+        
+        if was_edit_mode and o.type == 'MESH':
+            # Use selected face vertices for bounding box
+            mesh = o.data
+            selected_verts = set()
+            for poly in mesh.polygons:
+                if poly.select:
+                    for vert_idx in poly.vertices:
+                        selected_verts.add(vert_idx)
+            
+            # If faces were selected, use only those vertices
+            if selected_verts:
+                for vert_idx in selected_verts:
+                    pts.append(m @ mesh.vertices[vert_idx].co)
+            else:
+                # Fallback to full object if no faces selected
+                for v in o.bound_box:
+                    pts.append(m @ Vector(v))
+        else:
+            # Use full object bounding box for object mode
+            for v in o.bound_box:
+                pts.append(m @ Vector(v))
+
+    if not pts:
+        return None, None
 
     mn = Vector((min(p.x for p in pts),
                  min(p.y for p in pts),
